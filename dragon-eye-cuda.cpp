@@ -467,6 +467,10 @@ int main(int argc, char**argv)
     high_resolution_clock::time_point t1(high_resolution_clock::now());
 
     while(cap.read(capFrame)) {
+#if 0
+        /* (contrast) alpha = 3.2, (brightness) beta = 50 */   
+        capFrame.convertTo(capFrame, -1, 3.2, 50);
+#endif
         cvtColor(capFrame, frame, COLOR_BGR2GRAY);
         //frame = capFrame;
 #ifdef VIDEO_OUTPUT_SCREEN
