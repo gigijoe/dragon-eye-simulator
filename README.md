@@ -30,6 +30,10 @@ Change this line on dragon-eye-cuda.cpp
 
   #define VIDEO_INPUT_FILE "../video/baseB001.mkv"
 
+## Result
+
+[Video](https://www.youtube.com/watch?v=g1BrMynNwn8)
+
 
 
 
