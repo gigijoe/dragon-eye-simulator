@@ -28,7 +28,9 @@ All video are in directory video/
 
 Change this line on dragon-eye-cuda.cpp
 
+```
   #define VIDEO_INPUT_FILE "../video/baseB001.mkv"
+```
 
 ## Result
 
