@@ -44,6 +44,7 @@ using std::chrono::microseconds;
 #define MIN_COURSE_LENGTH            120    /* Minimum course length of RF trigger after detection of cross line */
 #define MIN_TARGET_TRACKED_COUNT     3      /* Minimum target tracked count of RF trigger after detection of cross line */
 
+//#define VIDEO_INPUT_FILE "../video/baseA000.mkv"
 //#define VIDEO_INPUT_FILE "../video/baseA011.mkv"
 #define VIDEO_INPUT_FILE "../video/baseB001.mkv"
 
@@ -381,6 +382,152 @@ void VideoWriterThread(int width, int height)
 
 #endif
 
+void object_contours(Mat & foregroundMask, vector<Rect> & roiRect)
+{
+        vector< vector<Point> > contours;
+        vector< Vec4i > hierarchy;
+//      findContours(foregroundMask, contours, hierarchy, RETR_TREE, CHAIN_APPROX_NONE);
+        findContours(foregroundMask, contours, hierarchy, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
+        sort(contours.begin(), contours.end(), ContoursSort); /* Contours sort by area, controus[0] is largest */
+
+        vector<Rect> boundRect( contours.size() );
+        //vector<Rect> roiRect;
+        for(int i=0; i<contours.size(); i++) {
+            approxPolyDP( Mat(contours[i]), contours[i], 3, true );
+            boundRect[i] = boundingRect( Mat(contours[i]) );
+            //drawContours(contoursImg, contours, i, color, 2, 8, hierarchy);
+            if(boundRect[i].width > MIN_TARGET_WIDTH && 
+                boundRect[i].height > MIN_TARGET_HEIGHT &&
+                boundRect[i].width <= MAX_TARGET_WIDTH && 
+                boundRect[i].height <= MAX_TARGET_HEIGHT) {
+                    roiRect.push_back(boundRect[i]);
+            }
+            if(roiRect.size() >= MAX_NUM_TARGET) /* Deal ROI with largest area only */
+                break;
+        }    
+}
+
+cuda::GpuMat gpuForegroundMask;
+Ptr<cuda::Filter> gaussianFilter;
+Ptr<cuda::Filter> erodeFilter;
+Ptr<cuda::Filter> erodeFilter2;
+Ptr<cuda::BackgroundSubtractorMOG2> bsGrayModel = cuda::createBackgroundSubtractorMOG2(30, 16, false);
+Ptr<cuda::BackgroundSubtractorMOG2> bsHsvModel = cuda::createBackgroundSubtractorMOG2(30, 48, false);
+
+void object_detection(Mat & capFrame, Mat & element, vector<Rect> & roiRect)
+{
+    Mat foregroundMask, background;
+    Mat frame;
+    cuda::GpuMat gpuFrame;
+
+    bool doUpdateModel = true;
+    bool doSmoothMask = true;
+
+#if 1
+        cvtColor(capFrame, frame, COLOR_BGR2GRAY);
+#else
+        Mat hsvFrame;
+        cvtColor(capFrame, hsvFrame, COLOR_BGR2HSV);
+        Mat hsvCh[3];
+        split(hsvFrame, hsvCh);
+        frame = hsvCh[0];
+#endif
+#if 1 /* Very poor performance ... Running by CPU is 10 times quick */
+        gpuFrame.upload(frame);
+
+        if(erodeFilter.empty()) 
+            erodeFilter = cuda::createMorphologyFilter(MORPH_ERODE, gpuFrame.type(), element);
+        erodeFilter->apply(gpuFrame, gpuFrame);
+#else
+        erode(frame, frame, element);
+        gpuFrame.upload(frame);
+#endif    
+        // pass the frame to background bsGrayModel
+        bsGrayModel->apply(gpuFrame, gpuForegroundMask, doUpdateModel ? -1 : 0);
+
+        // show foreground image and mask (with optional smoothing)
+        if(doSmoothMask) {
+            if(gaussianFilter.empty())
+                gaussianFilter = cuda::createGaussianFilter(gpuForegroundMask.type(), gpuForegroundMask.type(), Size(3, 3), 3.5);
+
+            gaussianFilter->apply(gpuForegroundMask, gpuForegroundMask);
+            //cuda::threshold(gpuForegroundMask, gpuForegroundMask, 10.0, 255.0, THRESH_BINARY);
+#if 0            
+            /* Erode & Dilate */
+            int erosion_size = 6;   
+            Mat element = cv::getStructuringElement(cv::MORPH_RECT,
+                          cv::Size(2 * erosion_size + 1, 2 * erosion_size + 1), 
+                          cv::Point(erosion_size, erosion_size) );
+            if(erodeFilter2.empty()) 
+                erodeFilter2 = cuda::createMorphologyFilter(MORPH_ERODE, gpuForegroundMask.type(), element);
+            erodeFilter2->apply(gpuForegroundMask, gpuForegroundMask);
+            gpuForegroundMask.download(foregroundMask);
+#endif
+#if 1
+            erodeFilter->apply(gpuForegroundMask, gpuForegroundMask);
+            gpuForegroundMask.download(foregroundMask);
+#else
+            gpuForegroundMask.download(foregroundMask);
+            erode(foregroundMask, foregroundMask, element);
+#endif
+        } else
+            gpuForegroundMask.download(foregroundMask);
+
+        object_contours(foregroundMask, roiRect);
+#if 0
+        cvtColor(capFrame, frame, COLOR_BGR2GRAY);
+#else
+        Mat hsvFrame;
+        cvtColor(capFrame, hsvFrame, COLOR_BGR2HSV);
+        Mat hsvCh[3];
+        split(hsvFrame, hsvCh);
+        frame = hsvCh[0];
+#endif
+#if 1 /* Very poor performance ... Running by CPU is 10 times quick */
+        gpuFrame.upload(frame);
+
+        if(erodeFilter.empty()) 
+            erodeFilter = cuda::createMorphologyFilter(MORPH_ERODE, gpuFrame.type(), element);
+        erodeFilter->apply(gpuFrame, gpuFrame);
+#else
+        erode(frame, frame, element);
+        gpuFrame.upload(frame);
+#endif    
+        // pass the frame to background bsGrayModel
+        bsHsvModel->apply(gpuFrame, gpuForegroundMask, doUpdateModel ? -1 : 0);
+
+        // show foreground image and mask (with optional smoothing)
+        if(doSmoothMask) {
+            if(gaussianFilter.empty())
+                gaussianFilter = cuda::createGaussianFilter(gpuForegroundMask.type(), gpuForegroundMask.type(), Size(3, 3), 3.5);
+
+            gaussianFilter->apply(gpuForegroundMask, gpuForegroundMask);
+            //cuda::threshold(gpuForegroundMask, gpuForegroundMask, 10.0, 255.0, THRESH_BINARY);
+#if 0            
+            /* Erode & Dilate */
+            int erosion_size = 6;   
+            Mat element = cv::getStructuringElement(cv::MORPH_RECT,
+                          cv::Size(2 * erosion_size + 1, 2 * erosion_size + 1), 
+                          cv::Point(erosion_size, erosion_size) );
+            if(erodeFilter2.empty()) 
+                erodeFilter2 = cuda::createMorphologyFilter(MORPH_ERODE, gpuForegroundMask.type(), element);
+            erodeFilter2->apply(gpuForegroundMask, gpuForegroundMask);
+            gpuForegroundMask.download(foregroundMask);
+#endif
+#if 1
+            erodeFilter->apply(gpuForegroundMask, gpuForegroundMask);
+            gpuForegroundMask.download(foregroundMask);
+#else
+            gpuForegroundMask.download(foregroundMask);
+            erode(foregroundMask, foregroundMask, element);
+#endif
+        } else
+            gpuForegroundMask.download(foregroundMask);
+
+        object_contours(foregroundMask, roiRect);
+
+}
+
 int main(int argc, char**argv)
 {
     double fps = 0;
@@ -388,8 +535,12 @@ int main(int argc, char**argv)
     if(signal(SIGINT, sig_handler) == SIG_ERR)
         printf("\ncan't catch SIGINT\n");
 
-    Mat frame, capFrame;
-    cuda::GpuMat gpuFrame;
+    //Mat frame; 
+    Mat capFrame;
+    //cuda::GpuMat gpuFrame;
+#ifdef VIDEO_OUTPUT_SCREEN
+    Mat outFrame;
+#endif
 
     cuda::printShortCudaDeviceInfo(cuda::getDevice());
     std::cout << cv::getBuildInformation() << std::endl;
@@ -411,7 +562,7 @@ int main(int argc, char**argv)
     }
 
 #ifdef VIDEO_INPUT_FILE
-    cap.read(capFrame);
+    //cap.read(capFrame);
 
     videoWidth = capFrame.cols;
     videoHeight = capFrame.rows;
@@ -433,23 +584,18 @@ int main(int argc, char**argv)
 #if defined(VIDEO_OUTPUT_FILE)
     thread outThread(&VideoWriterThread, capFrame.cols, capFrame.rows);
 #endif
-    //Ptr<BackgroundSubtractor> bsModel = createBackgroundSubtractorKNN();
-    //Ptr<BackgroundSubtractor> bsModel = createBackgroundSubtractorMOG2();
+    //Ptr<BackgroundSubtractor> bsGrayModel = createBackgroundSubtractorKNN();
+    //Ptr<BackgroundSubtractor> bsGrayModel = createBackgroundSubtractorMOG2();
     /* 30 : history, 16 : threshold */
-    Ptr<cuda::BackgroundSubtractorMOG2> bsModel = cuda::createBackgroundSubtractorMOG2(90, 16, false);
+    /* For GRAY color space */
+    //Ptr<cuda::BackgroundSubtractorMOG2> bsGrayModel = cuda::createBackgroundSubtractorMOG2(30, 8, false);
+    /* For HSV color space */
+    //Ptr<cuda::BackgroundSubtractorMOG2> bsGrayModel = cuda::createBackgroundSubtractorMOG2(30, 64, false);
 
-    bool doUpdateModel = true;
-    bool doSmoothMask = true;
+    //bool doUpdateModel = true;
+    //bool doSmoothMask = true;
 
-    Mat foregroundMask, background;
-#ifdef VIDEO_OUTPUT_SCREEN
-    Mat outFrame;
-#endif
-    cuda::GpuMat gpuForegroundMask;
-    Ptr<cuda::Filter> gaussianFilter;
-    Ptr<cuda::Filter> erodeFilter;
-    Ptr<cuda::Filter> erodeFilter2;
-
+    //Mat foregroundMask, background;
     Tracker tracker;
     Target *primaryTarget = 0;
 
@@ -468,11 +614,10 @@ int main(int argc, char**argv)
 
     while(cap.read(capFrame)) {
 #if 0
-        /* (contrast) alpha = 3.2, (brightness) beta = 50 */   
-        capFrame.convertTo(capFrame, -1, 3.2, 50);
+        /* (contrast) alpha = 2.2, (brightness) beta = 50 */   
+        capFrame.convertTo(capFrame, -1, 2.2, 50);
 #endif
-        cvtColor(capFrame, frame, COLOR_BGR2GRAY);
-        //frame = capFrame;
+
 #ifdef VIDEO_OUTPUT_SCREEN
         capFrame.copyTo(outFrame);
 #ifdef VIDEO_INPUT_FILE
@@ -481,82 +626,22 @@ int main(int argc, char**argv)
         line(outFrame, Point(0, cy), Point(cx, cy), Scalar(0, 255, 0), 1);
 #endif //VIDEO_INPUT_FILE
 #endif //VIDEO_OUTPUT_SCREEN
+
         int erosion_size = 6;   
-        Mat element = cv::getStructuringElement(cv::MORPH_RECT,
+        Mat element = cv::getStructuringElement(cv::MORPH_ELLIPSE,
                           cv::Size(2 * erosion_size + 1, 2 * erosion_size + 1), 
-                          cv::Point(erosion_size, erosion_size) );
-#if 0 /* Very poor performance ... Running by CPU is 10 times quick */
-        gpuFrame.upload(frame);
-/*
-        if(gpuFrame.channels() == 3) {
-            cuda::GpuMat destMat;
-            cuda::cvtColor(gpuFrame, destMat, COLOR_BGR2BGRA);
-            gpuFrame = destMat;
-        } 
-*/
-        if(erodeFilter.empty()) 
-            erodeFilter = cuda::createMorphologyFilter(MORPH_ERODE, gpuFrame.type(), element);
-        erodeFilter->apply(gpuFrame, gpuFrame);
-#else
-        erode(frame, frame, element);
-        gpuFrame.upload(frame);	
-#endif    
-        // pass the frame to background bsModel
-        bsModel->apply(gpuFrame, gpuForegroundMask, doUpdateModel ? -1 : 0);
+                          cv::Point(-1, -1) ); /* Default anchor point */
 
-        if(gaussianFilter.empty())
-            gaussianFilter = cuda::createGaussianFilter(gpuForegroundMask.type(), gpuForegroundMask.type(), Size(5, 5), 3.5);
-
-        // show foreground image and mask (with optional smoothing)
-        if(doSmoothMask) {
-            gaussianFilter->apply(gpuForegroundMask, gpuForegroundMask);
-            //cuda::threshold(gpuForegroundMask, gpuForegroundMask, 10.0, 255.0, THRESH_BINARY);
-            
-			/* Erode & Dilate */
-            int erosion_size = 6;   
-            Mat element = cv::getStructuringElement(cv::MORPH_RECT,
-                          cv::Size(2 * erosion_size + 1, 2 * erosion_size + 1), 
-                          cv::Point(erosion_size, erosion_size) );
-#if 0
-        if(erodeFilter2.empty()) 
-            erodeFilter2 = cuda::createMorphologyFilter(MORPH_ERODE, gpuForegroundMask.type(), element);
-        erodeFilter2->apply(gpuForegroundMask, gpuForegroundMask);
-        gpuForegroundMask.download(foregroundMask);
-#else
-            gpuForegroundMask.download(foregroundMask);
-            erode(foregroundMask, foregroundMask, element);
-#endif
-        } else
-            gpuForegroundMask.download(foregroundMask);
-
-		vector< vector<Point> > contours;
-    	vector< Vec4i > hierarchy;
-//    	findContours(foregroundMask, contours, hierarchy, RETR_TREE, CHAIN_APPROX_NONE);
-        findContours(foregroundMask, contours, hierarchy, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
-        sort(contours.begin(), contours.end(), ContoursSort); /* Contours sort by area, controus[0] is largest */
-
-        vector<Rect> boundRect( contours.size() );
         vector<Rect> roiRect;
 
-        RNG rng(12345);
-
-    	for(int i=0; i<contours.size(); i++) {
-    		approxPolyDP( Mat(contours[i]), contours[i], 3, true );
-       		boundRect[i] = boundingRect( Mat(contours[i]) );
-       		//drawContours(contoursImg, contours, i, color, 2, 8, hierarchy);
-    		if(boundRect[i].width > MIN_TARGET_WIDTH && 
-                boundRect[i].height > MIN_TARGET_HEIGHT &&
-    			boundRect[i].width <= MAX_TARGET_WIDTH && 
-                boundRect[i].height <= MAX_TARGET_HEIGHT) {
-                    roiRect.push_back(boundRect[i]);
+        object_detection(capFrame, element, roiRect);
 #ifdef VIDEO_OUTPUT_SCREEN
-                    Scalar color = Scalar( rng.uniform(0, 255), rng.uniform(0,255), rng.uniform(0,255) );
-                    rectangle( outFrame, boundRect[i].tl(), boundRect[i].br(), color, 2, 8, 0 );
+        RNG rng(12345);
+        for(int i=0;i<roiRect.size();i++) {
+            Scalar color = Scalar( rng.uniform(0, 255), rng.uniform(0,255), rng.uniform(0,255) );
+            rectangle( outFrame, roiRect[i].tl(), roiRect[i].br(), color, 2, 8, 0 );
+        }
 #endif
-    		}
-            if(roiRect.size() >= MAX_NUM_TARGET) /* Deal ROI with largest area only */
-                break;
-    	}
 
         tracker.Update(roiRect);
 
@@ -595,16 +680,16 @@ int main(int argc, char**argv)
                 }
             }
         }
-#if 1
+#if 0
         resize(frame, frame, Size(frame.cols * 3 / 4, frame.rows * 3 / 4));
         imshow("erode", frame);
 #endif
-#if 1
+#if 0
         resize(foregroundMask, foregroundMask, Size(foregroundMask.cols * 3 / 4, foregroundMask.rows * 3 / 4));
         imshow("foreground mask", foregroundMask);
 #endif
 #if 0
-        bsModel->getBackgroundImage(gpuForegroundMask);
+        bsGrayModel->getBackgroundImage(gpuForegroundMask);
 
         gpuForegroundMask.download(background);
 
