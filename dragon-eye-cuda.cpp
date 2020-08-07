@@ -378,7 +378,7 @@ void VideoWriterThread(int width, int height)
 
 #endif
 
-void contour_moving_object(Mat & foregroundMask, vector<Rect> & roiRect)
+void contour_moving_object(Mat & foregroundMask, vector<Rect> & roiRect, int y_offset = 0)
 {
     uint32_t num_target = 0;
 
@@ -397,6 +397,7 @@ void contour_moving_object(Mat & foregroundMask, vector<Rect> & roiRect)
             boundRect[i].height > MIN_TARGET_HEIGHT &&
             boundRect[i].width <= MAX_TARGET_WIDTH && 
             boundRect[i].height <= MAX_TARGET_HEIGHT) {
+                boundRect[i].y += y_offset;
                 roiRect.push_back(boundRect[i]);
                 if(++num_target >= MAX_NUM_TARGET)
                     break;
@@ -405,7 +406,7 @@ void contour_moving_object(Mat & foregroundMask, vector<Rect> & roiRect)
 }
 
 void extract_moving_object(Mat & frame, Mat & element, Ptr<cuda::Filter> & erodeFilter, Ptr<cuda::Filter> & gaussianFilter, 
-    Ptr<cuda::BackgroundSubtractorMOG2> & bsModel, vector<Rect> & roiRect)
+    Ptr<cuda::BackgroundSubtractorMOG2> & bsModel, vector<Rect> & roiRect, int y_offset = 0)
 {
     Mat foregroundMask;
     cuda::GpuMat gpuFrame;
@@ -431,7 +432,7 @@ void extract_moving_object(Mat & frame, Mat & element, Ptr<cuda::Filter> & erode
     erode(foregroundMask, foregroundMask, element);
 #endif
 
-    contour_moving_object(foregroundMask, roiRect);
+    contour_moving_object(foregroundMask, roiRect, y_offset);
 }
 
 int main(int argc, char**argv)
@@ -507,8 +508,8 @@ int main(int argc, char**argv)
 
     Ptr<cuda::Filter> erodeFilter1 = cuda::createMorphologyFilter(MORPH_ERODE, CV_8UC1, element);
     Ptr<cuda::Filter> erodeFilter2 = cuda::createMorphologyFilter(MORPH_ERODE, CV_8UC1, element);
-    Ptr<cuda::Filter> gaussianFilter1 = cuda::createGaussianFilter(CV_8UC1, CV_8UC1, Size(3, 3), 3.5);
-    Ptr<cuda::Filter> gaussianFilter2 = cuda::createGaussianFilter(CV_8UC1, CV_8UC1, Size(3, 3), 3.5);
+    Ptr<cuda::Filter> gaussianFilter1 = cuda::createGaussianFilter(CV_8UC1, CV_8UC1, Size(5, 5), 3.5);
+    Ptr<cuda::Filter> gaussianFilter2 = cuda::createGaussianFilter(CV_8UC1, CV_8UC1, Size(3, 3), 5.0);
     Ptr<cuda::BackgroundSubtractorMOG2> bsModel1 = cuda::createBackgroundSubtractorMOG2(30, 16, false);
     Ptr<cuda::BackgroundSubtractorMOG2> bsModel2 = cuda::createBackgroundSubtractorMOG2(30, 48, false);
 
@@ -530,29 +531,38 @@ int main(int argc, char**argv)
 #endif //VIDEO_OUTPUT_SCREEN
 
         vector<Rect> roiRect;
-#if 0
-        Mat frame; 
+#if 1
+        Mat frame, roiFrame; 
         cvtColor(capFrame, frame, COLOR_BGR2GRAY);
-        thread th1(extract_moving_object, std::ref(frame), std::ref(element), std::ref(erodeFilter1), std::ref(gaussianFilter1), std::ref(bsModel1), std::ref(roiRect));
+        thread th1(extract_moving_object, std::ref(frame), std::ref(element), std::ref(erodeFilter1), std::ref(gaussianFilter1), std::ref(bsModel1), std::ref(roiRect), 0);
+        th1.detach();
 
         Mat hsvFrame;
-        cvtColor(capFrame, hsvFrame, COLOR_BGR2HSV);
+        int y_offset = capFrame.rows * 2 / 3;
+        capFrame(Rect(0, y_offset, capFrame.cols, capFrame.rows - y_offset)).copyTo(roiFrame);
+        cvtColor(roiFrame, hsvFrame, COLOR_BGR2HSV);
         Mat hsvCh[3];
         split(hsvFrame, hsvCh);
-        thread th2(extract_moving_object, std::ref(hsvCh[0]), std::ref(element), std::ref(erodeFilter2), std::ref(gaussianFilter2), std::ref(bsModel2), std::ref(roiRect));
+        extract_moving_object(hsvCh[0], element, erodeFilter2, gaussianFilter2, bsModel2, roiRect, y_offset);
 
-        th1.join();
-        th2.join();
+        if(th1.joinable())
+            th1.join();
 #else
-        Mat frame; 
+        /* Gray color space for whole region */
+
+        Mat frame, roiFrame;
         cvtColor(capFrame, frame, COLOR_BGR2GRAY);
         extract_moving_object(frame, element, erodeFilter1, gaussianFilter1, bsModel1, roiRect);
 
+        /* HSV color space Hue channel for bottom 1/3 region */
+
         Mat hsvFrame;
-        cvtColor(capFrame, hsvFrame, COLOR_BGR2HSV);
+        int y_offset = capFrame.rows * 2 / 3;
+        capFrame(Rect(0, y_offset, capFrame.cols, capFrame.rows - y_offset)).copyTo(roiFrame);
+        cvtColor(roiFrame, hsvFrame, COLOR_BGR2HSV);
         Mat hsvCh[3];
         split(hsvFrame, hsvCh);
-        extract_moving_object(hsvCh[0], element, erodeFilter2, gaussianFilter2, bsModel2, roiRect);
+        extract_moving_object(hsvCh[0], element, erodeFilter2, gaussianFilter2, bsModel2, roiRect, y_offset);
 #endif
 
 #ifdef VIDEO_OUTPUT_SCREEN
