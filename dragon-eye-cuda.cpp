@@ -530,21 +530,30 @@ int main(int argc, char**argv)
 #endif //VIDEO_OUTPUT_SCREEN
 
         vector<Rect> roiRect;
-
+#if 0
         Mat frame; 
         cvtColor(capFrame, frame, COLOR_BGR2GRAY);
-        //extract_moving_object(frame, element, erodeFilter1, gaussianFilter1, bsModel1, roiRect);
         thread th1(extract_moving_object, std::ref(frame), std::ref(element), std::ref(erodeFilter1), std::ref(gaussianFilter1), std::ref(bsModel1), std::ref(roiRect));
 
         Mat hsvFrame;
         cvtColor(capFrame, hsvFrame, COLOR_BGR2HSV);
         Mat hsvCh[3];
         split(hsvFrame, hsvCh);
-        //extract_moving_object(hsvCh[0], element, erodeFilter2, gaussianFilter2, bsModel2, roiRect);
         thread th2(extract_moving_object, std::ref(hsvCh[0]), std::ref(element), std::ref(erodeFilter2), std::ref(gaussianFilter2), std::ref(bsModel2), std::ref(roiRect));
 
         th1.join();
         th2.join();
+#else
+        Mat frame; 
+        cvtColor(capFrame, frame, COLOR_BGR2GRAY);
+        extract_moving_object(frame, element, erodeFilter1, gaussianFilter1, bsModel1, roiRect);
+
+        Mat hsvFrame;
+        cvtColor(capFrame, hsvFrame, COLOR_BGR2HSV);
+        Mat hsvCh[3];
+        split(hsvFrame, hsvCh);
+        extract_moving_object(hsvCh[0], element, erodeFilter2, gaussianFilter2, bsModel2, roiRect);
+#endif
 
 #ifdef VIDEO_OUTPUT_SCREEN
         RNG rng(12345);
