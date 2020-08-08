@@ -2,6 +2,7 @@
 #include <opencv2/videoio.hpp>
 
 //#include <opencv2/cudacodec.hpp>
+#include <opencv2/cudafilters.hpp>
 #include <opencv2/cudabgsegm.hpp>
 #include <opencv2/cudaobjdetect.hpp>
 
@@ -411,7 +412,7 @@ void extract_moving_object(Mat & frame, Mat & element, Ptr<cuda::Filter> & erode
     Mat foregroundMask;
     cuda::GpuMat gpuFrame;
     cuda::GpuMat gpuForegroundMask;
-#if 1
+#if 0 /* Very poor performance ... Running by CPU is 10 times quick */
     gpuFrame.upload(frame);
     erodeFilter->apply(gpuFrame, gpuFrame);
 #else
@@ -424,7 +425,7 @@ void extract_moving_object(Mat & frame, Mat & element, Ptr<cuda::Filter> & erode
     // show foreground image and mask (with optional smoothing)
     gaussianFilter->apply(gpuForegroundMask, gpuForegroundMask);
     //cuda::threshold(gpuForegroundMask, gpuForegroundMask, 10.0, 255.0, THRESH_BINARY);
-#if 1
+#if 0 /* Very poor performance ... Running by CPU is 10 times quick */
     erodeFilter->apply(gpuForegroundMask, gpuForegroundMask);
     gpuForegroundMask.download(foregroundMask);
 #else
@@ -483,10 +484,6 @@ int main(int argc, char**argv)
     }
 #endif
 
-#if defined(VIDEO_OUTPUT_FILE)
-    thread outThread(&VideoWriterThread, capFrame.cols, capFrame.rows);
-#endif
-
     Tracker tracker;
     Target *primaryTarget = 0;
 
@@ -501,6 +498,10 @@ int main(int argc, char**argv)
     cx = (capFrame.cols / 2) - 1;
     cy = capFrame.rows-1;
 
+#if defined(VIDEO_OUTPUT_FILE)
+    thread outThread(&VideoWriterThread, capFrame.cols, capFrame.rows);
+#endif
+
     int erosion_size = 6;   
     Mat element = cv::getStructuringElement(cv::MORPH_ELLIPSE,
                     cv::Size(2 * erosion_size + 1, 2 * erosion_size + 1), 
@@ -508,10 +509,10 @@ int main(int argc, char**argv)
 
     Ptr<cuda::Filter> erodeFilter1 = cuda::createMorphologyFilter(MORPH_ERODE, CV_8UC1, element);
     Ptr<cuda::Filter> erodeFilter2 = cuda::createMorphologyFilter(MORPH_ERODE, CV_8UC1, element);
-    Ptr<cuda::Filter> gaussianFilter1 = cuda::createGaussianFilter(CV_8UC1, CV_8UC1, Size(5, 5), 3.5);
+    Ptr<cuda::Filter> gaussianFilter1 = cuda::createGaussianFilter(CV_8UC1, CV_8UC1, Size(3, 3), 5.0);
     Ptr<cuda::Filter> gaussianFilter2 = cuda::createGaussianFilter(CV_8UC1, CV_8UC1, Size(3, 3), 5.0);
-    Ptr<cuda::BackgroundSubtractorMOG2> bsModel1 = cuda::createBackgroundSubtractorMOG2(30, 16, false);
-    Ptr<cuda::BackgroundSubtractorMOG2> bsModel2 = cuda::createBackgroundSubtractorMOG2(30, 48, false);
+    Ptr<cuda::BackgroundSubtractorMOG2> bsModel1 = cuda::createBackgroundSubtractorMOG2(90, 48, false);
+    Ptr<cuda::BackgroundSubtractorMOG2> bsModel2 = cuda::createBackgroundSubtractorMOG2(90, 48, false);
 
     high_resolution_clock::time_point t1(high_resolution_clock::now());
 
@@ -531,7 +532,7 @@ int main(int argc, char**argv)
 #endif //VIDEO_OUTPUT_SCREEN
 
         vector<Rect> roiRect;
-#if 1
+#if 0
         Mat frame, roiFrame; 
         cvtColor(capFrame, frame, COLOR_BGR2GRAY);
         thread th1(extract_moving_object, std::ref(frame), std::ref(element), std::ref(erodeFilter1), std::ref(gaussianFilter1), std::ref(bsModel1), std::ref(roiRect), 0);

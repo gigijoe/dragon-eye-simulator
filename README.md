@@ -6,13 +6,13 @@ The intention of this project is to testing algorithm of F3F automatic base on P
 
 ## Hardware requirement
 
-Nvidia graphic card which supports cuda
+Nvidia graphic card which supports cuda (For example GTX1050)
 
-## Software requirement
+## Software environment
 
-OpenCV 4.1.0
-
-cuda 10.2
+Ubuntu 20.04 / GCC-9 / CMake  
+OpenCV 4.4.0  
+cuda 11.0  
 
 ## Build & run
 
@@ -26,9 +26,8 @@ $ ./dragon-eye-cuda
 
 ## Video source
 
-All video are in directory video/
-
-Change this line on dragon-eye-cuda.cpp
+All video are in directory video/  
+Change this line on dragon-eye-cuda.cpp  
 
 ```
   #define VIDEO_INPUT_FILE "../video/baseB001.mkv"
@@ -36,8 +35,9 @@ Change this line on dragon-eye-cuda.cpp
 
 ## Result
 
-[Video](https://www.youtube.com/watch?v=g1BrMynNwn8)
+[Video](https://www.youtube.com/watch?v=g1BrMynNwn8)  
 
+[Video](https://youtu.be/D6D2nifsbDQ)
 
 
 
