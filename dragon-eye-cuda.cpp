@@ -5,6 +5,7 @@
 #include <opencv2/cudafilters.hpp>
 #include <opencv2/cudabgsegm.hpp>
 #include <opencv2/cudaobjdetect.hpp>
+#include <opencv2/cudaarithm.hpp>
 
 #include <errno.h>
 #include <fcntl.h> 
@@ -47,17 +48,18 @@ using std::chrono::microseconds;
 
 //#define VIDEO_INPUT_FILE "../video/baseA000.mkv"
 //#define VIDEO_INPUT_FILE "../video/baseA011.mkv"
-#define VIDEO_INPUT_FILE "../video/baseB001.mkv"
+//#define VIDEO_INPUT_FILE "../video/baseA017.mkv"
+//#define VIDEO_INPUT_FILE "../video/baseB001.mkv"
+//#define VIDEO_INPUT_FILE "../video/baseB002.mkv"
+#define VIDEO_INPUT_FILE "../video/baseB030.mkv"
+//#define VIDEO_INPUT_FILE "../video/baseB036.mkv"
+//#define VIDEO_INPUT_FILE "../video/baseB042.mkv"
+//#define VIDEO_INPUT_FILE "../video/baseB044.mkv"
+//#define VIDEO_INPUT_FILE "../video/baseB048.mkv"
 
 #define VIDEO_OUTPUT_SCREEN
-#define VIDEO_OUTPUT_DIR "."
 //#define VIDEO_OUTPUT_FILE "base"
-
-#ifdef VIDEO_OUTPUT_FILE
-#ifndef VIDEO_OUTPUT_SCREEN
-#define VIDEO_OUTPUT_SCREEN
-#endif 
-#endif
+#define VIDEO_OUTPUT_DIR "."
 
 #define VIDEO_FRAME_DROP 30
 
@@ -108,6 +110,18 @@ public:
     vector< Point > m_points;
     Point m_velocity;
 
+    void Reset() {
+        Rect r = m_rects.back();
+        Point p = r.tl();
+        m_rects.clear();
+        m_points.clear();
+        m_rects.push_back(r);
+        m_points.push_back(p);
+        m_triggerCount = 0;
+        //m_frameTick =
+        //m_arcLength = 0; /* TODO : Do clear this ? */
+    }
+
     void Update(Rect & roi, unsigned long frameTick) {
         if(m_rects.size() > 0)
             m_arcLength += norm(roi.tl() - m_rects.back().tl());
@@ -122,20 +136,12 @@ public:
         m_rects.push_back(roi);
         m_points.push_back(roi.tl());
         m_frameTick = frameTick;
-    }
 #if 0
-    void Reset() {
-        Rect r = m_rects.back();
-        Point p = r.tl();
-        m_rects.clear();
-        m_points.clear();
-        m_rects.push_back(r);
-        m_points.push_back(p);
-        m_triggerCount = 0;
-        //m_frameTick =
-        //m_arcLength = 0; /* TODO : Do clear this ? */
-    }
+        if(m_triggerCount >= MAX_NUM_TRIGGER)
+            Reset();
 #endif
+    }
+
     inline double ArcLength() { return m_arcLength; }
     inline unsigned long FrameTick() { return m_frameTick; }
     inline Rect & LatestRect() { return m_rects.back(); }
@@ -445,7 +451,7 @@ int main(int argc, char**argv)
 
     Mat capFrame;
     //cuda::GpuMat gpuFrame;
-#ifdef VIDEO_OUTPUT_SCREEN
+#if defined(VIDEO_OUTPUT_SCREEN) || defined(VIDEO_OUTPUT_FILE)
     Mat outFrame;
 #endif
 
@@ -503,7 +509,7 @@ int main(int argc, char**argv)
 #endif
 
     int erosion_size = 6;   
-    Mat element = cv::getStructuringElement(cv::MORPH_ELLIPSE,
+    Mat element = cv::getStructuringElement(cv::MORPH_RECT,
                     cv::Size(2 * erosion_size + 1, 2 * erosion_size + 1), 
                     cv::Point(-1, -1) ); /* Default anchor point */
 
@@ -522,7 +528,7 @@ int main(int argc, char**argv)
         capFrame.convertTo(capFrame, -1, 2.2, 50);
 #endif
 
-#ifdef VIDEO_OUTPUT_SCREEN
+#if defined(VIDEO_OUTPUT_SCREEN) || defined(VIDEO_OUTPUT_FILE)
         capFrame.copyTo(outFrame);
 #ifdef VIDEO_INPUT_FILE
         line(outFrame, Point(cx, 0), Point(cx, cy), Scalar(0, 255, 0), 1);
@@ -566,7 +572,7 @@ int main(int argc, char**argv)
         extract_moving_object(hsvCh[0], element, erodeFilter2, gaussianFilter2, bsModel2, roiRect, y_offset);
 #endif
 
-#ifdef VIDEO_OUTPUT_SCREEN
+#if defined(VIDEO_OUTPUT_SCREEN) || defined(VIDEO_OUTPUT_FILE)
         RNG rng(12345);
         for(int i=0;i<roiRect.size();i++) {
             Scalar color = Scalar( rng.uniform(0, 255), rng.uniform(0,255), rng.uniform(0,255) );
@@ -578,7 +584,7 @@ int main(int argc, char**argv)
 
         primaryTarget = tracker.PrimaryTarget();
         if(primaryTarget) {
-#ifdef VIDEO_OUTPUT_SCREEN
+#if defined(VIDEO_OUTPUT_SCREEN) || defined(VIDEO_OUTPUT_FILE)
             Rect r = primaryTarget->m_rects.back();
             rectangle( outFrame, r.tl(), r.br(), Scalar( 255, 0, 0 ), 2, 8, 0 );
 
@@ -598,7 +604,7 @@ int main(int argc, char**argv)
                     (primaryTarget->m_points[0].y < cy && primaryTarget->LatestPoint().y >= cy)) {
 #endif //VIDEO_INPUT_FILE
                     if(primaryTarget->TriggerCount() < MAX_NUM_TRIGGER) { /* Triggle 4 times maximum  */
-#ifdef VIDEO_OUTPUT_SCREEN
+#if defined(VIDEO_OUTPUT_SCREEN) || defined(VIDEO_OUTPUT_FILE)
 #ifdef VIDEO_INPUT_FILE
                         line(outFrame, Point(cx, 0), Point(cx, cy), Scalar(0, 0, 255), 3);
 #else
@@ -611,16 +617,18 @@ int main(int argc, char**argv)
                 }
             }
         }
-#ifdef VIDEO_OUTPUT_SCREEN
+#if defined(VIDEO_OUTPUT_SCREEN) || defined(VIDEO_OUTPUT_FILE)
         char str[32];
         snprintf(str, 32, "FPS : %.2lf", fps);
         writeText(outFrame, string(str));
 #if defined(VIDEO_OUTPUT_FILE)
         videoWriterQueue.push(outFrame.clone());
-#endif        
+#endif
+#ifdef VIDEO_OUTPUT_SCREEN
         resize(outFrame, outFrame, Size(outFrame.cols * 3 / 4, outFrame.rows * 3 / 4));
         namedWindow("Out Frame", WINDOW_AUTOSIZE);
         imshow("Out Frame", outFrame);
+#endif
 #endif
 #ifdef VIDEO_OUTPUT_SCREEN
         int k = waitKey(1);
