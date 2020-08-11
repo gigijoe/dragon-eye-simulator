@@ -1,12 +1,15 @@
 # dragon-eye F3F automatic base
 
+<pre>
 The intention of this project is to testing algorithm of F3F automatic base on PC. The input source is H.264 video file (.mp4 or .mkv). The output can be display on screen and save to H.264 video file (.mp4 or .mkv). Further more it can also display intermediate processing frame on screen. So, it's a good tool for development.
+</pre>
 
 ![Alt text](Screenshot.png?raw=true "Screenshot")
 
 ## Hardware environment
 
-Nvidia graphic card which supports cuda (For example GTX1050)
+* Intel(R) Core(TM) i5-9300H CPU @ 2.40GHz
+* Nvidia graphic card which supports cuda (For example GTX1050)
 
 ## Software environment
 
@@ -36,6 +39,9 @@ $ cmake ../
 $ make
 $ ./dragon-eye-cuda
 ```
+
+* Press key 'P' to pause / continue
+* Press key 'ESC' to quit
 
 ## Video options
 
