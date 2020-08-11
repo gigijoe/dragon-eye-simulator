@@ -50,14 +50,14 @@ using std::chrono::microseconds;
 //#define VIDEO_INPUT_FILE "../video/baseA011.mkv"
 //#define VIDEO_INPUT_FILE "../video/baseA017.mkv"
 //#define VIDEO_INPUT_FILE "../video/baseB000.mkv"
-//#define VIDEO_INPUT_FILE "../video/baseB001.mkv"
+#define VIDEO_INPUT_FILE "../video/baseB001.mkv"
 //#define VIDEO_INPUT_FILE "../video/baseB002.mkv"
 //#define VIDEO_INPUT_FILE "../video/baseB004.mkv"
 //#define VIDEO_INPUT_FILE "../video/baseB030.mkv"
 //#define VIDEO_INPUT_FILE "../video/baseB036.mkv"
 //#define VIDEO_INPUT_FILE "../video/baseB042.mkv"
 //#define VIDEO_INPUT_FILE "../video/baseB044.mkv"
-#define VIDEO_INPUT_FILE "../video/baseB048.mkv"
+//#define VIDEO_INPUT_FILE "../video/baseB048.mkv"
 
 #define VIDEO_OUTPUT_SCREEN
 //#define VIDEO_OUTPUT_FILE "base"
