@@ -1,18 +1,31 @@
-# DRAGON EYE is a F3F automatic base
+# dragon-eye F3F automatic base
 
 The intention of this project is to testing algorithm of F3F automatic base on PC. The input source is H.264 video file (.mp4 or .mkv). The output can be display on screen and save to H.264 video file (.mp4 or .mkv). Further more it can also display intermediate processing frame on screen. So, it's a good tool for development.
 
 ![Alt text](Screenshot.png?raw=true "Screenshot")
 
-## Hardware requirement
+## Hardware environment
 
 Nvidia graphic card which supports cuda (For example GTX1050)
 
 ## Software environment
 
-Ubuntu 20.04 / GCC-9 / CMake  
-OpenCV 4.4.0  
-cuda 11.0  
+* Ubuntu 20.04 / GCC-9 / CMake  
+* OpenCV 4.4.0  
+* cuda 11.0  
+
+## Technology
+
+Base on image processing technology morphology operators, background subtraction and image smoothing, etc ...
+
+## Processing flow
+
+<pre>
+Camera |-> BGR to GRAY -> Erode -> BS MOG2 -> Gaussian Filter -> Erode -> Find Contour -> Moving Objects 1  
+       |-> Fetch bottom 1/3 region -> BGR to HSV -> Split H Channel -> Erode -> BS MOG2 -> Gaussian Filter -> Erode -> Find Contour -> Moving Objects 2
+
+Moving Objects + Moving Objects 2 -> Tracker -> Find Primary Target -> Find if cross the line
+</pre>
 
 ## Build & run
 
@@ -24,7 +37,7 @@ $ make
 $ ./dragon-eye-cuda
 ```
 
-## Video source
+## Video options
 
 All video are in directory video/  
 Change this line on dragon-eye-cuda.cpp  
@@ -33,11 +46,25 @@ Change this line on dragon-eye-cuda.cpp
   #define VIDEO_INPUT_FILE "../video/baseB001.mkv"
 ```
 
+If output result to screen
+
+```
+  #define VIDEO_OUTPUT_SCREEN
+```
+
+If output result to file
+
+```
+  #define VIDEO_OUTPUT_FILE "base"
+```
+
 ## Result
 
-[Video](https://www.youtube.com/watch?v=g1BrMynNwn8)  
+It can do 100+ fps with output screen 
 
-[Video](https://youtu.be/D6D2nifsbDQ)
+[Video 1](https://www.youtube.com/watch?v=g1BrMynNwn8)  
+
+[Video 2](https://youtu.be/D6D2nifsbDQ)
 
 
 

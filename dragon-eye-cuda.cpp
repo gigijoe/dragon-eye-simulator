@@ -49,13 +49,15 @@ using std::chrono::microseconds;
 //#define VIDEO_INPUT_FILE "../video/baseA000.mkv"
 //#define VIDEO_INPUT_FILE "../video/baseA011.mkv"
 //#define VIDEO_INPUT_FILE "../video/baseA017.mkv"
+//#define VIDEO_INPUT_FILE "../video/baseB000.mkv"
 //#define VIDEO_INPUT_FILE "../video/baseB001.mkv"
 //#define VIDEO_INPUT_FILE "../video/baseB002.mkv"
-#define VIDEO_INPUT_FILE "../video/baseB030.mkv"
+//#define VIDEO_INPUT_FILE "../video/baseB004.mkv"
+//#define VIDEO_INPUT_FILE "../video/baseB030.mkv"
 //#define VIDEO_INPUT_FILE "../video/baseB036.mkv"
 //#define VIDEO_INPUT_FILE "../video/baseB042.mkv"
 //#define VIDEO_INPUT_FILE "../video/baseB044.mkv"
-//#define VIDEO_INPUT_FILE "../video/baseB048.mkv"
+#define VIDEO_INPUT_FILE "../video/baseB048.mkv"
 
 #define VIDEO_OUTPUT_SCREEN
 //#define VIDEO_OUTPUT_FILE "base"
@@ -427,8 +429,6 @@ void extract_moving_object(Mat & frame, Mat & element, Ptr<cuda::Filter> & erode
 #endif    
     // pass the frame to background bsGrayModel
     bsModel->apply(gpuFrame, gpuForegroundMask, -1);
-
-    // show foreground image and mask (with optional smoothing)
     gaussianFilter->apply(gpuForegroundMask, gpuForegroundMask);
     //cuda::threshold(gpuForegroundMask, gpuForegroundMask, 10.0, 255.0, THRESH_BINARY);
 #if 0 /* Very poor performance ... Running by CPU is 10 times quick */
@@ -485,7 +485,7 @@ int main(int argc, char**argv)
         << ") at " << cap.get(CAP_PROP_FPS) << " FPS." << endl;
     cout << "Drop first " << VIDEO_FRAME_DROP << " for camera stable ..." << endl;
     for(int i=0;i<VIDEO_FRAME_DROP;i++) {
-        if(!cap.read(frame))
+        if(!cap.read(capFrame))
             printf("Error read camera frame ...\n");
     }
 #endif
@@ -539,9 +539,9 @@ int main(int argc, char**argv)
 
         vector<Rect> roiRect;
 #if 0
-        Mat frame, roiFrame; 
-        cvtColor(capFrame, frame, COLOR_BGR2GRAY);
-        thread th1(extract_moving_object, std::ref(frame), std::ref(element), std::ref(erodeFilter1), std::ref(gaussianFilter1), std::ref(bsModel1), std::ref(roiRect), 0);
+        Mat grayFrame, roiFrame; 
+        cvtColor(capFrame, grayFrame, COLOR_BGR2GRAY);
+        thread th1(extract_moving_object, std::ref(grayFrame), std::ref(element), std::ref(erodeFilter1), std::ref(gaussianFilter1), std::ref(bsModel1), std::ref(roiRect), 0);
         th1.detach();
 
         Mat hsvFrame;
@@ -557,9 +557,10 @@ int main(int argc, char**argv)
 #else
         /* Gray color space for whole region */
 
-        Mat frame, roiFrame;
-        cvtColor(capFrame, frame, COLOR_BGR2GRAY);
-        extract_moving_object(frame, element, erodeFilter1, gaussianFilter1, bsModel1, roiRect);
+        Mat grayFrame, roiFrame;
+        cvtColor(capFrame, grayFrame, COLOR_BGR2GRAY);
+//imshow("GRAY frame", grayFrame);
+        extract_moving_object(grayFrame, element, erodeFilter1, gaussianFilter1, bsModel1, roiRect);
 
         /* HSV color space Hue channel for bottom 1/3 region */
 
