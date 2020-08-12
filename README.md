@@ -35,20 +35,13 @@ $ mkdir build
 $ cd build
 $ cmake ../
 $ make
-$ ./dragon-eye-cuda
+$ ./dragon-eye-cuda ../video/baseB001.mkv
 ```
 
 * Press key 'P' to pause / continue
 * Press key 'ESC' to quit
 
 ## Video options
-
-All video are in directory video/  
-Change this line on dragon-eye-cuda.cpp  
-
-```
-  #define VIDEO_INPUT_FILE "../video/baseB001.mkv"
-```
 
 If output result to screen
 

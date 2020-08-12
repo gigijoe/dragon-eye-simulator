@@ -46,18 +46,7 @@ using std::chrono::microseconds;
 #define MIN_COURSE_LENGTH            120    /* Minimum course length of RF trigger after detection of cross line */
 #define MIN_TARGET_TRACKED_COUNT     3      /* Minimum target tracked count of RF trigger after detection of cross line */
 
-//#define VIDEO_INPUT_FILE "../video/baseA000.mkv"
-//#define VIDEO_INPUT_FILE "../video/baseA011.mkv"
-//#define VIDEO_INPUT_FILE "../video/baseA017.mkv"
-//#define VIDEO_INPUT_FILE "../video/baseB000.mkv"
-#define VIDEO_INPUT_FILE "../video/baseB001.mkv"
-//#define VIDEO_INPUT_FILE "../video/baseB002.mkv"
-//#define VIDEO_INPUT_FILE "../video/baseB004.mkv"
-//#define VIDEO_INPUT_FILE "../video/baseB030.mkv"
-//#define VIDEO_INPUT_FILE "../video/baseB036.mkv"
-//#define VIDEO_INPUT_FILE "../video/baseB042.mkv"
-//#define VIDEO_INPUT_FILE "../video/baseB044.mkv"
-//#define VIDEO_INPUT_FILE "../video/baseB048.mkv"
+#define VIDEO_INPUT_FILE
 
 #define VIDEO_OUTPUT_SCREEN
 //#define VIDEO_OUTPUT_FILE "base"
@@ -459,7 +448,13 @@ int main(int argc, char**argv)
     std::cout << cv::getBuildInformation() << std::endl;
 
 #ifdef VIDEO_INPUT_FILE
-    VideoCapture cap(VIDEO_INPUT_FILE, cv::CAP_FFMPEG);
+    VideoCapture cap;
+    if(argc > 1)
+        cap.open(argv[1], cv::CAP_FFMPEG);
+    else {
+        cout << "Usage : dragon-eye-cuda <vidoe file>" << endl;
+        return 0;
+    }
 #else
     int index = 0;    
     if(argc > 1)
