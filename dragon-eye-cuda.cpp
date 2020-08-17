@@ -27,7 +27,8 @@ using namespace std;
 #include <queue>
 #include <thread>
 
-using std::chrono::high_resolution_clock;
+//using std::chrono::high_resolution_clock;
+using std::chrono::steady_clock;
 using std::chrono::duration_cast;
 using std::chrono::microseconds;
 
@@ -515,7 +516,7 @@ int main(int argc, char**argv)
     Ptr<cuda::BackgroundSubtractorMOG2> bsModel1 = cuda::createBackgroundSubtractorMOG2(90, 48, false);
     Ptr<cuda::BackgroundSubtractorMOG2> bsModel2 = cuda::createBackgroundSubtractorMOG2(90, 48, false);
 
-    high_resolution_clock::time_point t1(high_resolution_clock::now());
+    steady_clock::time_point t1(steady_clock::now());
 
     while(cap.read(capFrame)) {
 #if 0
@@ -640,13 +641,13 @@ int main(int argc, char**argv)
         if(bShutdown)
             break;
 
-        high_resolution_clock::time_point t2(high_resolution_clock::now());
+        steady_clock::time_point t2(steady_clock::now());
         double dt_us(static_cast<double>(duration_cast<microseconds>(t2 - t1).count()));
         //std::cout << (dt_us / 1000.0) << " ms" << std::endl;
         fps = (1000000.0 / dt_us);
         std::cout << "FPS : " << fixed  << setprecision(2) <<  fps << std::endl;
 
-        t1 = high_resolution_clock::now();
+        t1 = steady_clock::now();
     }
 
     cap.release();
