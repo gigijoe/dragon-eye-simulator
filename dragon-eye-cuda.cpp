@@ -6,6 +6,7 @@
 #include <opencv2/cudabgsegm.hpp>
 #include <opencv2/cudaobjdetect.hpp>
 #include <opencv2/cudaarithm.hpp>
+#include <opencv2/cudaimgproc.hpp>
 
 #include <errno.h>
 #include <fcntl.h> 
@@ -199,7 +200,7 @@ public:
             for(i=0; i<roiRect.size(); i++) {
                 Rect r = t->m_rects.back();
                 if((r & roiRect[i]).area() > 0) { /* Target tracked ... */
-                    //if(t->DotProduct(roiRect[i].tl()) >= 0) /* Two vector less than 90 degree */
+                    if(t->DotProduct(roiRect[i].tl()) >= 0) /* Two vector less than 90 degree */
                         break;                
                 }
 
@@ -231,7 +232,7 @@ public:
             for(i=0; i<roiRect.size(); i++) {
                 Rect r = t->m_rects.back();
                 if((r & roiRect[i]).area() > 0) { /* Target tracked ... */
-                    //if(t->DotProduct(roiRect[i].tl()) >= 0) /* Two vector less than 90 degree */
+                    if(t->DotProduct(roiRect[i].tl()) >= 0) /* Two vector less than 90 degree */
                         break;                
                 }
 
@@ -256,7 +257,8 @@ public:
                 if(m_frameTick - t->FrameTick() > MAX_NUM_FRAME_MISSING_TARGET) { /* Target still missing for over X frames */
 #if 1            
                     Point p = t->m_rects.back().tl();
-                    printf("lost target : %d, %d\n", p.x, p.y);
+                    //printf("lost target : %d, %d\n", p.x, p.y);
+                    printf("lost target : %d, %d\n", t->m_velocity.x, t->m_velocity.y);
 #endif
                     if(&(*t) == m_primaryTarget)
                         m_primaryTarget = 0;
@@ -273,7 +275,7 @@ public:
             for(t=m_targets.begin();t!=m_targets.end();t++) {
                 Rect r = t->m_rects.back();
                 if((r & roiRect[i]).area() > 0) { /* Next step tracked ... */
-                    //if(t->DotProduct(roiRect[i].tl()) >= 0) /* Two vector less than 90 degree */
+                    if(t->DotProduct(roiRect[i].tl()) >= 0) /* Two vector less than 90 degree */
                         break;
                 }
 
@@ -297,7 +299,7 @@ public:
             if(t == m_targets.end()) { /* New target */
                 m_targets.push_back(Target(roiRect[i], m_frameTick));
 #if 1            
-                printf("new target : %d, %d\n", roiRect[i].tl().x, roiRect[i].tl().y);
+                //printf("new target : %d, %d\n", roiRect[i].tl().x, roiRect[i].tl().y);
 #endif
             } else
                 t->Update(roiRect[i], m_frameTick);
@@ -426,18 +428,28 @@ void contour_moving_object(Mat & frame, Mat & foregroundMask, vector<Rect> & roi
             boundRect[i].height > MIN_TARGET_HEIGHT &&
             boundRect[i].width <= MAX_TARGET_WIDTH && 
             boundRect[i].height <= MAX_TARGET_HEIGHT) {
-#if 1
+#if 1 /* Anti cloud ... */
                 double minVal; 
                 double maxVal; 
                 Point minLoc; 
                 Point maxLoc;
 
-                Mat roiFrame;
-                frame(boundRect[i]).copyTo(roiFrame);
+                Mat roiFrame = frame(boundRect[i]);
                 minMaxLoc(roiFrame, &minVal, &maxVal, &minLoc, &maxLoc ); 
                 /* If difference of max and min value of ROI rect is too small then it could be noise such as cloud or sea */
-                if((maxVal - minVal) < 24)
+                if((maxVal - minVal) < 8)
                     continue; /* Too small, drop it. */
+/*                    
+                else {
+                    Scalar s = mean(roiFrame);
+                    if((s.val[0] - minVal) < 16 || (maxVal - s.val[0]) < 16)
+                        continue;
+                }
+*/
+#endif
+#if 1
+                if(roiFrame.cols > roiFrame.rows && (roiFrame.cols >> 4) > roiFrame.rows)
+                    continue; /* Ignore thin object */
 #endif
                 boundRect[i].y += y_offset;
                 roiRect.push_back(boundRect[i]);
@@ -445,31 +457,40 @@ void contour_moving_object(Mat & frame, Mat & foregroundMask, vector<Rect> & roi
                     break;
         }
     }    
+
 }
 
-void extract_moving_object(Mat & frame, Mat & element, Ptr<cuda::Filter> & erodeFilter, Ptr<cuda::Filter> & gaussianFilter, 
-    Ptr<cuda::BackgroundSubtractorMOG2> & bsModel, vector<Rect> & roiRect, int y_offset = 0)
+void extract_moving_object(Mat & frame, 
+    Mat & elementErode, Mat & elementDilate, 
+    Ptr<cuda::Filter> & erodeFilter, Ptr<cuda::Filter> & dilateFilter, Ptr<cuda::Filter> & gaussianFilter, 
+    Ptr<cuda::BackgroundSubtractorMOG2> & bsModel, 
+    vector<Rect> & roiRect, int y_offset = 0)
 {
     Mat foregroundMask;
     cuda::GpuMat gpuFrame;
     cuda::GpuMat gpuForegroundMask;
-#if 1 /* Very poor performance ... Running by CPU is 10 times quick */
-    gpuFrame.upload(frame);
-    erodeFilter->apply(gpuFrame, gpuFrame);
-#else
-    erode(frame, frame, element);
-    gpuFrame.upload(frame);
-#endif    
+
+    gpuFrame.upload(frame); 
     // pass the frame to background bsGrayModel
+    gaussianFilter->apply(gpuFrame, gpuFrame);
     bsModel->apply(gpuFrame, gpuForegroundMask, -1);
-    gaussianFilter->apply(gpuForegroundMask, gpuForegroundMask);
     //cuda::threshold(gpuForegroundMask, gpuForegroundMask, 10.0, 255.0, THRESH_BINARY);
-#if 1 /* Very poor performance ... Running by CPU is 10 times quick */
+#if 1 /* Run with GPU */
     erodeFilter->apply(gpuForegroundMask, gpuForegroundMask);
+    dilateFilter->apply(gpuForegroundMask, gpuForegroundMask);
     gpuForegroundMask.download(foregroundMask);
-#else
+#else /* Run with CPU */
     gpuForegroundMask.download(foregroundMask);
-    erode(foregroundMask, foregroundMask, element);
+    morphologyEx(foregroundMask, foregroundMask, MORPH_ERODE, elementErode);
+    morphologyEx(foregroundMask, foregroundMask, MORPH_DILATE, elementDilate);
+#endif
+
+#ifdef VIDEO_OUTPUT_SCREEN
+        Mat tFrame;
+        foregroundMask.copyTo(tFrame);
+        resize(tFrame, tFrame, Size(tFrame.cols * 3 / 4, tFrame.rows * 3 / 4));
+        namedWindow("FG Frame", WINDOW_AUTOSIZE);
+        imshow("FG Frame", tFrame);
 #endif
 
     contour_moving_object(frame, foregroundMask, roiRect, y_offset);
@@ -547,26 +568,24 @@ int main(int argc, char**argv)
     thread outThread(&VideoWriterThread, capFrame.cols, capFrame.rows);
 #endif
 
-    int erosion_size = 3;   
-    Mat element = cv::getStructuringElement(cv::MORPH_RECT,
-                    cv::Size(2 * erosion_size + 1, 2 * erosion_size + 1), 
+    int erosion_size1 = 1;   
+    Mat elementErode = cv::getStructuringElement(cv::MORPH_RECT,
+                    cv::Size(2 * erosion_size1 + 1, 2 * erosion_size1 + 1), 
                     cv::Point(-1, -1) ); /* Default anchor point */
 
-    Ptr<cuda::Filter> erodeFilter1 = cuda::createMorphologyFilter(MORPH_ERODE, CV_8UC1, element);
-    Ptr<cuda::Filter> erodeFilter2 = cuda::createMorphologyFilter(MORPH_ERODE, CV_8UC1, element);
+    int erosion_size2 = 2;   
+    Mat elementDilate = cv::getStructuringElement(cv::MORPH_RECT,
+                    cv::Size(2 * erosion_size2 + 1, 2 * erosion_size2 + 1), 
+                    cv::Point(-1, -1) ); /* Default anchor point */
+
+    Ptr<cuda::Filter> erodeFilter = cuda::createMorphologyFilter(MORPH_ERODE, CV_8UC1, elementErode);
+    Ptr<cuda::Filter> dilateFilter = cuda::createMorphologyFilter(MORPH_DILATE, CV_8UC1, elementDilate);
 
     /* background history count, varThreshold, shadow detection */
-#if 0
-    Ptr<cuda::BackgroundSubtractorMOG2> bsModel1 = cuda::createBackgroundSubtractorMOG2(90, 48, false);
-    Ptr<cuda::BackgroundSubtractorMOG2> bsModel2 = cuda::createBackgroundSubtractorMOG2(90, 48, false);
-    Ptr<cuda::Filter> gaussianFilter1 = cuda::createGaussianFilter(CV_8UC1, CV_8UC1, Size(3, 3), 5.0);
-    Ptr<cuda::Filter> gaussianFilter2 = cuda::createGaussianFilter(CV_8UC1, CV_8UC1, Size(3, 3), 5.0);
-#else
-    Ptr<cuda::BackgroundSubtractorMOG2> bsModel1 = cuda::createBackgroundSubtractorMOG2(90, 16, false); 
-    Ptr<cuda::BackgroundSubtractorMOG2> bsModel2 = cuda::createBackgroundSubtractorMOG2(90, 16, false);
-    Ptr<cuda::Filter> gaussianFilter1 = cuda::createGaussianFilter(CV_8UC1, CV_8UC1, Size(3, 3), 0);
-    Ptr<cuda::Filter> gaussianFilter2 = cuda::createGaussianFilter(CV_8UC1, CV_8UC1, Size(3, 3), 0);
-#endif
+
+    Ptr<cuda::BackgroundSubtractorMOG2> bsModel = cuda::createBackgroundSubtractorMOG2(90, 0, false); 
+    Ptr<cuda::Filter> gaussianFilter = cuda::createGaussianFilter(CV_8UC1, CV_8UC1, Size(5, 5), 0);
+
     steady_clock::time_point t1(steady_clock::now());
 
     int dropCount = 30;
@@ -591,54 +610,11 @@ int main(int argc, char**argv)
 #endif //VIDEO_OUTPUT_SCREEN
 
         vector<Rect> roiRect;
-#if 0
-        Mat grayFrame, roiFrame; 
-        cvtColor(capFrame, grayFrame, COLOR_BGR2GRAY);
-        thread th1(extract_moving_object, std::ref(grayFrame), std::ref(element), std::ref(erodeFilter1), std::ref(gaussianFilter1), std::ref(bsModel1), std::ref(roiRect), 0);
-        th1.detach();
-
-        Mat hsvFrame;
-        int y_offset = capFrame.rows * 2 / 3;
-        capFrame(Rect(0, y_offset, capFrame.cols, capFrame.rows - y_offset)).copyTo(roiFrame);
-        cvtColor(roiFrame, hsvFrame, COLOR_BGR2HSV);
-        Mat hsvCh[3];
-        split(hsvFrame, hsvCh);
-        extract_moving_object(hsvCh[0], element, erodeFilter2, gaussianFilter2, bsModel2, roiRect, y_offset);
-
-        if(th1.joinable())
-            th1.join();
-#else
         /* Gray color space for whole region */
         Mat grayFrame, roiFrame;
         cvtColor(capFrame, grayFrame, COLOR_BGR2GRAY);
-#if 0
-        Mat diffFrame;
-        absdiff(bgFrame, grayFrame, diffFrame);
-        addWeighted(diffFrame, 0.2, bgFrame, 0.8, 0, bgFrame);
-        //diffFrame.copyTo(grayFrame);
-/*
-        Mat tempFrame;
-        grayFrame.copyTo(tempFrame);
-        resize(tempFrame, tempFrame, Size(tempFrame.cols * 3 / 4, tempFrame.rows * 3 / 4));
-        namedWindow("BG Frame", WINDOW_AUTOSIZE);
-        imshow("BG Frame", tempFrame);
-*/
-//imshow("GRAY frame", grayFrame);
-        extract_moving_object(diffFrame, element, erodeFilter1, gaussianFilter1, bsModel1, roiRect);
-#else
-        //threshold(grayFrame, grayFrame, 10.0, 240.0, THRESH_BINARY);
-        extract_moving_object(grayFrame, element, erodeFilter1, gaussianFilter1, bsModel1, roiRect);
-#endif
-        /* HSV color space Hue channel for bottom 1/3 region */
 
-        Mat hsvFrame;
-        int y_offset = capFrame.rows * 2 / 3;
-        capFrame(Rect(0, y_offset, capFrame.cols, capFrame.rows - y_offset)).copyTo(roiFrame);
-        cvtColor(roiFrame, hsvFrame, COLOR_BGR2HSV);
-        Mat hsvCh[3];
-        split(hsvFrame, hsvCh);
-        extract_moving_object(hsvCh[0], element, erodeFilter2, gaussianFilter2, bsModel2, roiRect, y_offset);
-#endif
+        extract_moving_object(grayFrame, elementErode, elementDilate, erodeFilter, dilateFilter, gaussianFilter, bsModel, roiRect);
 
 #if defined(VIDEO_OUTPUT_SCREEN) || defined(VIDEO_OUTPUT_FILE)
         RNG rng(12345);
@@ -717,7 +693,7 @@ int main(int argc, char**argv)
         //std::cout << (dt_us / 1000.0) << " ms" << std::endl;
         fps = (1000000.0 / dt_us);
         std::cout << "FPS : " << fixed  << setprecision(2) <<  fps << std::endl;
-
+//usleep(40000);
         t1 = steady_clock::now();
     }
 
