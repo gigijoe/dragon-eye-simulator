@@ -22,9 +22,9 @@ Base on image processing technology morphology operators, background subtraction
 ## Processing flow
 
 <pre>
-Camera |-> BGR to GRAY -> Gaussian Filter -> BS MOG2 -> Erode -> Dilate -> Find Contour -> Anti cloud -> Moving Targets 1  
+Camera |-> BGR to GRAY -> Gaussian Filter -> BS MOG2 -> Erode -> Dilate -> Find Contour -> Anti cloud -> Moving Targets  
        
-Moving Targets 1 + Moving Targets 2 -> Targets Tracker -> Find Primary Target -> Find if cross the line
+Moving Targets -> Targets Tracker -> Find Primary Target -> Find if cross the line
 </pre>
 
 ## Build & run
