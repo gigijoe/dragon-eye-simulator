@@ -143,22 +143,22 @@ public:
         return dp;
     }
 
-    double CosTheta(Point p) {
+    double CosineAngle(Point p) {
         size_t i = m_rects.size();
         if(i < 2)
             return 0;
+
         i--;
-        Point v[2];
-        v[0].x = p.x - m_rects[i].tl().x;
-        v[0].y = p.y - m_rects[i].tl().y;
-        v[1].x = m_rects[i].tl().x - m_rects[i-1].tl().x;
-        v[1].y = m_rects[i].tl().y - m_rects[i-1].tl().y;
-        double dp = v[0].x * v[1].x + v[0].y * v[1].y;
+        Point v1, v2;
+        v1.x = p.x - m_rects[i].tl().x;
+        v1.y = p.y - m_rects[i].tl().y;
+        v2.x = m_rects[i].tl().x - m_rects[i-1].tl().x;
+        v2.y = m_rects[i].tl().y - m_rects[i-1].tl().y;
 
         /* A.B = |A||B|cos() */
         /* cos() = A.B / |A||B| */
 
-        return dp / (sqrt((v[0].x * v[0].x) + (v[0].y * v[0].y)) * sqrt((v[1].x * v[1].x) + (v[1].y * v[1].y)));
+        return v1.dot(v2) / (norm(v1) * norm(v1));
     }
 
     inline double ArcLength() { return m_arcLength; }
@@ -200,7 +200,7 @@ public:
             for(i=0; i<roiRect.size(); i++) {
                 Rect r = t->m_rects.back();
                 if((r & roiRect[i]).area() > 0) { /* Target tracked ... */
-                    if(t->DotProduct(roiRect[i].tl()) >= 0) /* Two vector less than 90 degree */
+                    //if(t->DotProduct(roiRect[i].tl()) >= 0) /* Two vector less than 90 degree */
                         break;                
                 }
 
@@ -208,7 +208,7 @@ public:
                 r.x += t->m_velocity.x * f;
                 r.y += t->m_velocity.y * f;
                 if((r & roiRect[i]).area() > 0) { /* Target tracked with velocity ... */
-                    if(t->DotProduct(roiRect[i].tl()) >= 0) /* Two vector less than 90 degree */
+                    //if(t->DotProduct(roiRect[i].tl()) >= 0) /* Two vector less than 90 degree */
                         break;
                 }
 #if 0
@@ -232,7 +232,7 @@ public:
             for(i=0; i<roiRect.size(); i++) {
                 Rect r = t->m_rects.back();
                 if((r & roiRect[i]).area() > 0) { /* Target tracked ... */
-                    if(t->DotProduct(roiRect[i].tl()) >= 0) /* Two vector less than 90 degree */
+                    //if(t->DotProduct(roiRect[i].tl()) >= 0) /* Two vector less than 90 degree */
                         break;                
                 }
 
@@ -240,7 +240,7 @@ public:
                 r.x += t->m_velocity.x * f;
                 r.y += t->m_velocity.y * f;
                 if((r & roiRect[i]).area() > 0) { /* Target tracked with velocity ... */
-                    if(t->DotProduct(roiRect[i].tl()) >= 0) /* Two vector less than 90 degree */
+                    //if(t->DotProduct(roiRect[i].tl()) >= 0) /* Two vector less than 90 degree */
                         break;
                 }
 #if 0
@@ -275,7 +275,7 @@ public:
             for(t=m_targets.begin();t!=m_targets.end();t++) {
                 Rect r = t->m_rects.back();
                 if((r & roiRect[i]).area() > 0) { /* Next step tracked ... */
-                    if(t->DotProduct(roiRect[i].tl()) >= 0) /* Two vector less than 90 degree */
+                    //if(t->DotProduct(roiRect[i].tl()) >= 0) /* Two vector less than 90 degree */
                         break;
                 }
 
@@ -283,7 +283,7 @@ public:
                 r.x += t->m_velocity.x * f;
                 r.y += t->m_velocity.y * f;
                 if((r & roiRect[i]).area() > 0) { /* Next step tracked with velocity ... */
-                    if(t->DotProduct(roiRect[i].tl()) >= 0) /* Two vector less than 90 degree */
+                    //if(t->DotProduct(roiRect[i].tl()) >= 0) /* Two vector less than 90 degree */
                         break;
                 }
 #if 0
@@ -421,41 +421,37 @@ void contour_moving_object(Mat & frame, Mat & foregroundMask, vector<Rect> & roi
 
     vector<Rect> boundRect( contours.size() );
     for(int i=0; i<contours.size(); i++) {
-        approxPolyDP( Mat(contours[i]), contours[i], 3, true );
+        //approxPolyDP( Mat(contours[i]), contours[i], 3, true );
         boundRect[i] = boundingRect( Mat(contours[i]) );
         //drawContours(contoursImg, contours, i, color, 2, 8, hierarchy);
-        if(boundRect[i].width > MIN_TARGET_WIDTH && 
-            boundRect[i].height > MIN_TARGET_HEIGHT &&
-            boundRect[i].width <= MAX_TARGET_WIDTH && 
-            boundRect[i].height <= MAX_TARGET_HEIGHT) {
-#if 1 /* Anti cloud ... */
-                double minVal; 
-                double maxVal; 
-                Point minLoc; 
-                Point maxLoc;
+        if(boundRect[i].width > MAX_TARGET_WIDTH &&
+            boundRect[i].height > MAX_TARGET_HEIGHT)
+            continue; /* Extremely large object */
 
-                Mat roiFrame = frame(boundRect[i]);
-                minMaxLoc(roiFrame, &minVal, &maxVal, &minLoc, &maxLoc ); 
-                /* If difference of max and min value of ROI rect is too small then it could be noise such as cloud or sea */
-                if((maxVal - minVal) < 8)
-                    continue; /* Too small, drop it. */
-/*                    
-                else {
-                    Scalar s = mean(roiFrame);
-                    if((s.val[0] - minVal) < 16 || (maxVal - s.val[0]) < 16)
-                        continue;
-                }
-*/
+        if(boundRect[i].width < MIN_TARGET_WIDTH && 
+            boundRect[i].height < MIN_TARGET_HEIGHT)
+            break; /* Rest are small objects, ignore them */
+
+#if 1 /* Anti cloud ... */
+        double minVal; 
+        double maxVal; 
+        Point minLoc; 
+        Point maxLoc;
+
+        Mat roiFrame = frame(boundRect[i]);
+        minMaxLoc(roiFrame, &minVal, &maxVal, &minLoc, &maxLoc ); 
+            /* If difference of max and min value of ROI rect is too small then it could be noise such as cloud or sea */
+        if((maxVal - minVal) < 8)
+            continue; /* Too small, drop it. */
 #endif
 #if 1
-                if(roiFrame.cols > roiFrame.rows && (roiFrame.cols >> 4) > roiFrame.rows)
-                    continue; /* Ignore thin object */
-#endif
-                boundRect[i].y += y_offset;
-                roiRect.push_back(boundRect[i]);
-                if(++num_target >= MAX_NUM_TARGET)
-                    break;
-        }
+        if(roiFrame.cols > roiFrame.rows && (roiFrame.cols >> 4) > roiFrame.rows)
+            continue; /* Ignore thin object */
+#endif                        
+        boundRect[i].y += y_offset;
+        roiRect.push_back(boundRect[i]);
+        if(++num_target >= MAX_NUM_TARGET)
+            break;
     }    
 
 }
@@ -568,7 +564,7 @@ int main(int argc, char**argv)
     thread outThread(&VideoWriterThread, capFrame.cols, capFrame.rows);
 #endif
 
-    int erosion_size1 = 1;   
+    int erosion_size1 = 2;   
     Mat elementErode = cv::getStructuringElement(cv::MORPH_RECT,
                     cv::Size(2 * erosion_size1 + 1, 2 * erosion_size1 + 1), 
                     cv::Point(-1, -1) ); /* Default anchor point */
