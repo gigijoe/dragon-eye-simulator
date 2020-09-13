@@ -686,10 +686,15 @@ int main(int argc, char**argv)
 
         steady_clock::time_point t2(steady_clock::now());
         double dt_us(static_cast<double>(duration_cast<microseconds>(t2 - t1).count()));
+        while(dt_us < 33000) {
+            usleep(1000);
+            t2 = steady_clock::now();
+            dt_us = static_cast<double>(duration_cast<microseconds>(t2 - t1).count());
+        }
         //std::cout << (dt_us / 1000.0) << " ms" << std::endl;
         fps = (1000000.0 / dt_us);
         std::cout << "FPS : " << fixed  << setprecision(2) <<  fps << std::endl;
-//usleep(40000);
+
         t1 = steady_clock::now();
     }
 
