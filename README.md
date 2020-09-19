@@ -1,6 +1,6 @@
 # dragon-eye-cuda - F3F automatic base simulator
 
-The intention of this project is to testing algorithm of F3F automatic base on PC. The input source is H.264 video file (.mp4 or .mkv). The output can be display on screen and save to H.264 video file (.mp4 or .mkv). Further more it can also display intermediate processing frame on screen. So, it's a good tool for development.
+The intention of this project is to testing algorithm of F3F automatic base on PC. The input source is 720p or 1080p H.264 video file (.mp4 or .mkv). The output can be display on screen and save to H.264 video file (.mp4 or .mkv). Further more it can also display intermediate processing frame on screen. So, it's a good tool for development.
 
 ![Alt text](Screenshot.png?raw=true "Screenshot")
 
@@ -22,7 +22,7 @@ Base on image processing technology morphology operators, background subtraction
 ## Processing flow
 
 <pre>
-Camera -> BGR to GRAY -> Gaussian Filter -> BS MOG2 -> Erode -> Dilate -> Find Contour -> Anti cloud -> Moving Targets  
+Camera -> BGR to GRAY -> Gaussian Filter -> MOG2 Background Subtraction -> Erode -> Dilate -> Find Contour -> Anti cloud -> Moving Targets  
        
 Moving Targets -> Targets Tracker -> Find Primary Target -> Find if cross the line
 </pre>
