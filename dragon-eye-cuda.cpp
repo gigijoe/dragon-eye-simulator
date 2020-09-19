@@ -43,7 +43,7 @@ using std::chrono::microseconds;
 
 #define MAX_NUM_TARGET 6
 #define MAX_NUM_TRIGGER 4
-#define MAX_NUM_FRAME_MISSING_TARGET 10
+#define MAX_NUM_FRAME_MISSING_TARGET 3
 
 #define MIN_COURSE_LENGTH            120    /* Minimum course length of RF trigger after detection of cross line */
 #define MIN_TARGET_TRACKED_COUNT     3      /* Minimum target tracked count of RF trigger after detection of cross line */
@@ -93,7 +93,12 @@ protected:
     uint8_t m_triggerCount;
 
     vector< Rect > m_rects;
+    vector< Point > m_vectors;
     Point m_velocity;
+
+    Point center(Rect & r) {
+        return Point(r.tl().x + (r.width / 2), r.tl().y + (r.height / 2));
+    }
 
 public:
     Target(Rect & roi, unsigned long frameTick) : m_arcLength(0), m_frameTick(frameTick), m_triggerCount(0) {
@@ -121,6 +126,11 @@ public:
             m_velocity.x = (m_velocity.x + (roi.tl().x - m_rects.back().tl().x)) / 2;
             m_velocity.y = (m_velocity.y + (roi.tl().y - m_rects.back().tl().y)) / 2;
         }
+        if(m_rects.size() >= 1) {
+            Point p = roi.tl() - m_rects.back().tl();
+            m_vectors.push_back(p);
+        }
+
         m_rects.push_back(roi);
         m_frameTick = frameTick;
 #if 0
@@ -163,11 +173,14 @@ public:
 
     inline double ArcLength() { return m_arcLength; }
     inline unsigned long FrameTick() { return m_frameTick; }
-    inline Rect & EndRect() { return m_rects.back(); }
-    inline uint32_t NumberOfRect() { return m_rects.size(); }
+    inline Rect & LastRect() { return m_rects.back(); }
+#if 0    
     inline Point BeginPoint() { return m_rects[0].tl(); }
     inline Point EndPoint() { return m_rects.back().tl(); }
-    inline Point GetPoint(uint32_t index) { return m_rects[index].tl(); }
+#else
+    inline Point BeginPoint() { return center(m_rects[0]); }
+    inline Point EndPoint() { return center(m_rects.back()); }
+#endif    
     inline void Trigger() { m_triggerCount++; }
     inline uint8_t TriggerCount() { return m_triggerCount; }
     //inline Point & Velocity() { return m_velocity; }
@@ -178,7 +191,7 @@ public:
 
 static inline bool TargetSort(Target & a, Target & b)
 {
-    return a.EndRect().area() > b.EndRect().area();
+    return a.LastRect().area() > b.LastRect().area();
 }
 
 class Tracker
@@ -192,7 +205,7 @@ public:
     Tracker() : m_frameTick(0), m_primaryTarget(0) {}
 
     void Update(vector< Rect > & roiRect) {
-        const int euclidean_distance = 240;
+        const int euclidean_distance = 120;
 
         if(m_primaryTarget) {
             Target *t = m_primaryTarget;
@@ -254,7 +267,18 @@ public:
                 }
             }
             if(i == roiRect.size()) { /* Target missing ... */
-                if(m_frameTick - t->FrameTick() > MAX_NUM_FRAME_MISSING_TARGET) { /* Target still missing for over X frames */
+                bool ignoreMissingTarget = false;
+                if(t->m_rects.size() <= MAX_NUM_FRAME_MISSING_TARGET) { 
+                    for(int j=0;j<t->m_vectors.size();j++) {
+                        Point p = t->m_vectors[j];
+                        if(p.x == 0 && p.y == 0) { /* With none moving behavior. Maybe fake signal ... */
+                            ignoreMissingTarget = true;
+                            break;
+                        }
+                    }
+                }
+                if(m_frameTick - t->FrameTick() > MAX_NUM_FRAME_MISSING_TARGET || /* Target still missing for over X frames */
+                    ignoreMissingTarget) { 
 #if 1            
                     Point p = t->m_rects.back().tl();
                     //printf("lost target : %d, %d\n", p.x, p.y);
@@ -299,7 +323,7 @@ public:
             if(t == m_targets.end()) { /* New target */
                 m_targets.push_back(Target(roiRect[i], m_frameTick));
 #if 1            
-                //printf("new target : %d, %d\n", roiRect[i].tl().x, roiRect[i].tl().y);
+                printf("new target : %d, %d\n", roiRect[i].tl().x, roiRect[i].tl().y);
 #endif
             } else
                 t->Update(roiRect[i], m_frameTick);
@@ -316,6 +340,23 @@ public:
     }
 
     inline Target *PrimaryTarget() { return m_primaryTarget; }
+
+#if defined(VIDEO_OUTPUT_SCREEN) || defined(VIDEO_OUTPUT_FILE)
+    void DrawPrimaryTarget(Mat & outFrame) {
+        Rect r = m_primaryTarget->LastRect();
+        rectangle( outFrame, r.tl(), r.br(), Scalar( 255, 0, 0 ), 2, 8, 0 );
+
+        if(m_primaryTarget->m_rects.size() > 1) { /* Minimum 2 points ... */
+            for(int i=0;i<m_primaryTarget->m_rects.size()-1;i++) {
+                Point p0 = m_primaryTarget->m_rects[i].tl();
+                Point p1 = m_primaryTarget->m_rects[i+1].tl();
+                line(outFrame, p0, p1, Scalar(0, 0, 255), 1);
+                //Point v = p1 - p0;
+                //printf("[%d,%d]\n", v.x, v.y);
+            }
+        }        
+    }
+#endif    
 };
 
 class FrameQueue
@@ -441,7 +482,7 @@ void contour_moving_object(Mat & frame, Mat & foregroundMask, vector<Rect> & roi
         Mat roiFrame = frame(boundRect[i]);
         minMaxLoc(roiFrame, &minVal, &maxVal, &minLoc, &maxLoc ); 
             /* If difference of max and min value of ROI rect is too small then it could be noise such as cloud or sea */
-        if((maxVal - minVal) < 8)
+        if((maxVal - minVal) < 24)
             continue; /* Too small, drop it. */
 #endif
 #if 1
@@ -500,7 +541,6 @@ int main(int argc, char**argv)
         printf("\ncan't catch SIGINT\n");
 
     Mat capFrame, bgFrame;
-    //cuda::GpuMat gpuFrame;
 #if defined(VIDEO_OUTPUT_SCREEN) || defined(VIDEO_OUTPUT_FILE)
     Mat outFrame;
 #endif
@@ -547,7 +587,6 @@ int main(int argc, char**argv)
 #endif
 
     Tracker tracker;
-    Target *primaryTarget = 0;
 
     int cx, cy;
     while(1) {
@@ -564,14 +603,14 @@ int main(int argc, char**argv)
     thread outThread(&VideoWriterThread, capFrame.cols, capFrame.rows);
 #endif
 
-    int erosion_size1 = 2;   
+    int erosion_size = 1;   
     Mat elementErode = cv::getStructuringElement(cv::MORPH_RECT,
-                    cv::Size(2 * erosion_size1 + 1, 2 * erosion_size1 + 1), 
+                    cv::Size(2 * erosion_size + 1, 2 * erosion_size + 1), 
                     cv::Point(-1, -1) ); /* Default anchor point */
 
-    int erosion_size2 = 2;   
+    int dilate_size = 2;   
     Mat elementDilate = cv::getStructuringElement(cv::MORPH_RECT,
-                    cv::Size(2 * erosion_size2 + 1, 2 * erosion_size2 + 1), 
+                    cv::Size(2 * dilate_size + 1, 2 * dilate_size + 1), 
                     cv::Point(-1, -1) ); /* Default anchor point */
 
     Ptr<cuda::Filter> erodeFilter = cuda::createMorphologyFilter(MORPH_ERODE, CV_8UC1, elementErode);
@@ -622,17 +661,10 @@ int main(int argc, char**argv)
 
         tracker.Update(roiRect);
 
-        primaryTarget = tracker.PrimaryTarget();
+        Target *primaryTarget = tracker.PrimaryTarget();
         if(primaryTarget) {
 #if defined(VIDEO_OUTPUT_SCREEN) || defined(VIDEO_OUTPUT_FILE)
-            Rect r = primaryTarget->EndRect();
-            rectangle( outFrame, r.tl(), r.br(), Scalar( 255, 0, 0 ), 2, 8, 0 );
-
-            if(primaryTarget->NumberOfRect() > 1) { /* Minimum 2 points ... */
-                for(int i=0;i<primaryTarget->NumberOfRect()-1;i++) {
-                    line(outFrame, primaryTarget->GetPoint(i), primaryTarget->GetPoint(i+1), Scalar(0, 0, 255), 1);
-                }
-            }
+        tracker.DrawPrimaryTarget(outFrame);
 #endif
             if(primaryTarget->ArcLength() > MIN_COURSE_LENGTH && 
                 primaryTarget->RectCount() > MIN_TARGET_TRACKED_COUNT) {
