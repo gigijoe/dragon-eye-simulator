@@ -22,9 +22,9 @@ Base on image processing technology morphology operators, background subtraction
 ## Processing flow
 
 <pre>
-Camera -> BGR to GRAY -> Gaussian Filter -> MOG2 Background Subtraction -> Erode -> Dilate -> Find Contour -> Anti cloud -> Moving Targets  
+Camera -> BGR to GRAY -> MOG2 Background Subtraction -> Erode -> Dilate -> Find Contour -> Anti cloud -> Moving Targets  
        
-Moving Targets -> Targets Tracker -> Find Primary Target -> Find if cross the line
+Moving Targets -> Targets Tracker -> Find if cross the line
 </pre>
 
 ## Build & run
@@ -55,8 +55,6 @@ If output result to file
 ```
 
 ## Result
-
-It can do 100+ fps with output screen 
 
 [Video 1](https://www.youtube.com/watch?v=g1BrMynNwn8)  
 
