@@ -455,8 +455,8 @@ void extract_moving_object(Mat & frame,
     bsModel->apply(gpuFrame, gpuForegroundMask, 0.05);
     //cuda::threshold(gpuForegroundMask, gpuForegroundMask, 10.0, 255.0, THRESH_BINARY);
 #if 1 /* Run with GPU */
-    erodeFilter->apply(gpuForegroundMask, gpuForegroundMask);
-    dilateFilter->apply(gpuForegroundMask, gpuForegroundMask);
+    //erodeFilter->apply(gpuForegroundMask, gpuForegroundMask);
+    //dilateFilter->apply(gpuForegroundMask, gpuForegroundMask);
     gpuForegroundMask.download(foregroundMask);
 #else /* Run with CPU */
     gpuForegroundMask.download(foregroundMask);
@@ -560,8 +560,9 @@ int main(int argc, char**argv)
 
     /* background history count, varThreshold, shadow detection */
     Ptr<cuda::BackgroundSubtractorMOG2> bsModel = cuda::createBackgroundSubtractorMOG2(30, 64, false);
-    //cout << bsModel->getVarInit() << " / " << bsModel->getVarMax() << " / " << bsModel->getVarMax() << endl;
+    /* https://blog.csdn.net/m0_37901643/article/details/72841289 */
     /* Default variance of each gaussian component 15 / 75 / 75 */ 
+    //cout << bsModel->getVarInit() << " / " << bsModel->getVarMax() << " / " << bsModel->getVarMax() << endl;
     bsModel->setVarInit(15);
     bsModel->setVarMax(20);
     bsModel->setVarMin(4);
