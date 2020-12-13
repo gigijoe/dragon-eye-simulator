@@ -44,7 +44,7 @@ using std::chrono::microseconds;
 
 #define MAX_NUM_TARGET 6
 #define MAX_NUM_TRIGGER 4
-#define MAX_NUM_FRAME_MISSING_TARGET 12
+#define MAX_NUM_FRAME_MISSING_TARGET 6
 
 #define MIN_COURSE_LENGTH            120    /* Minimum course length of RF trigger after detection of cross line */
 #define MIN_TARGET_TRACKED_COUNT     3      /* Minimum target tracked count of RF trigger after detection of cross line */
@@ -259,7 +259,7 @@ public:
             if(rr == roiRect.end()) { /* Target missing ... */
                 for(rr=roiRect.begin();rr!=roiRect.end();rr++) { /* */
                     if(cv::norm(r2.tl()-rr->tl()) < (rr->width + rr->height)) { /* Target tracked with velocity and Euclidean distance ... */
-                        //if(t->DotProduct(rr->tl()) >= 0) /* Two vector less than 90 degree */
+                        if(t->DotProduct(rr->tl()) >= 0) /* Two vector less than 90 degree */
                             break;
                     }
                 }
