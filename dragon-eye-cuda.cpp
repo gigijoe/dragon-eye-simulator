@@ -44,7 +44,7 @@ using std::chrono::microseconds;
 
 #define MAX_NUM_TARGET 6
 #define MAX_NUM_TRIGGER 4
-#define MAX_NUM_FRAME_MISSING_TARGET 6
+#define MAX_NUM_FRAME_MISSING_TARGET 12
 
 #define MIN_COURSE_LENGTH            120    /* Minimum course length of RF trigger after detection of cross line */
 #define MIN_TARGET_TRACKED_COUNT     3      /* Minimum target tracked count of RF trigger after detection of cross line */
@@ -119,7 +119,8 @@ public:
     void Update(Rect & roi, unsigned long frameTick) {
         if(m_rects.size() > 0)
             m_arcLength += norm(roi.tl() - m_rects.back().tl());
-#if 1
+
+#if 0
         if(m_rects.size() == 1) {
             m_velocity.x = (roi.tl().x - m_rects.back().tl().x);
             m_velocity.y = (roi.tl().y - m_rects.back().tl().y);
@@ -194,6 +195,12 @@ public:
     }
 
     inline double ArcLength() { return m_arcLength; }
+    inline double AbsLength() {         
+        if(m_rects.size() > 1)
+            return norm(m_rects.back().tl() - m_rects[0].tl());
+        else
+            return 0;
+    }    
     inline unsigned long FrameTick() { return m_frameTick; }
     inline Rect & LastRect() { return m_rects.back(); }
 #if 0    
@@ -226,37 +233,38 @@ public:
     Tracker() : m_frameTick(0) {}
 
     void Update(list< Rect > & roiRect) {
-        const int euclidean_distance = 120;
-
         for(list< Target >::iterator t=m_targets.begin();t!=m_targets.end();) { /* Try to find lost targets */
             list<Rect>::iterator rr;
+            Rect r1 = t->m_rects.back();
+            Rect r2 = r1;
+            unsigned long f = m_frameTick - t->FrameTick();
+            r2.x += t->m_velocity.x * f;
+            r2.y += t->m_velocity.y * f;
             for(rr=roiRect.begin();rr!=roiRect.end();rr++) {
-                Rect r = t->m_rects.back();
-                if((r & *rr).area() > 0) { /* Target tracked ... */
+                if((r1 & *rr).area() > 0) { /* Target tracked ... */
                     //if(t->DotProduct(rr->tl()) >= 0) /* Two vector less than 90 degree */
                         break;                
                 }
 
-                unsigned long f = m_frameTick - t->FrameTick();
-                r.x += t->m_velocity.x * f;
-                r.y += t->m_velocity.y * f;
-                if((r & *rr).area() > 0) { /* Target tracked with velocity ... */
+                if((r2 & *rr).area() > 0) { /* Target tracked with velocity ... */
                     //if(t->DotProduct(rr->tl()) >= 0) /* Two vector less than 90 degree */
                         break;
                 }
 
-                if(cv::norm(r.tl()-rr->tl()) < euclidean_distance) { /* Target tracked with velocity and Euclidean distance ... */
-                    if(t->DotProduct(rr->tl()) >= 0) /* Two vector less than 90 degree */
+                if(cv::norm(r2.tl()-rr->tl()) < (rr->width + rr->height) / 2) { /* Target tracked with velocity and Euclidean distance ... */
+                    //if(t->DotProduct(rr->tl()) >= 0) /* Two vector less than 90 degree */
                         break;
                 }
-#if 0
-                r = t->m_rects.back();
-                if(cv::norm(r.tl()-rr->tl()) < euclidean_distance) { /* Target tracked with Euclidean distance ... */
-                    if(t->DotProduct(rr->tl()) >= 0) /* Two vector less than 90 degree */
-                        break;
-                }
-#endif
             }
+            if(rr == roiRect.end()) { /* Target missing ... */
+                for(rr=roiRect.begin();rr!=roiRect.end();rr++) { /* */
+                    if(cv::norm(r2.tl()-rr->tl()) < (rr->width + rr->height)) { /* Target tracked with velocity and Euclidean distance ... */
+                        //if(t->DotProduct(rr->tl()) >= 0) /* Two vector less than 90 degree */
+                            break;
+                    }
+                }
+            }
+
             if(rr == roiRect.end()) { /* Target missing ... */
                 bool ignoreMissingTarget = false;
                 if(t->m_rects.size() <= MAX_NUM_FRAME_MISSING_TARGET) { 
@@ -455,8 +463,8 @@ void extract_moving_object(Mat & frame,
     bsModel->apply(gpuFrame, gpuForegroundMask, 0.05);
     //cuda::threshold(gpuForegroundMask, gpuForegroundMask, 10.0, 255.0, THRESH_BINARY);
 #if 1 /* Run with GPU */
-    //erodeFilter->apply(gpuForegroundMask, gpuForegroundMask);
-    //dilateFilter->apply(gpuForegroundMask, gpuForegroundMask);
+    erodeFilter->apply(gpuForegroundMask, gpuForegroundMask);
+    dilateFilter->apply(gpuForegroundMask, gpuForegroundMask);
     gpuForegroundMask.download(foregroundMask);
 #else /* Run with CPU */
     gpuForegroundMask.download(foregroundMask);
@@ -559,7 +567,7 @@ int main(int argc, char**argv)
     Ptr<cuda::Filter> dilateFilter = cuda::createMorphologyFilter(MORPH_DILATE, CV_8UC1, elementDilate);
 
     /* background history count, varThreshold, shadow detection */
-    Ptr<cuda::BackgroundSubtractorMOG2> bsModel = cuda::createBackgroundSubtractorMOG2(30, 64, false);
+    Ptr<cuda::BackgroundSubtractorMOG2> bsModel = cuda::createBackgroundSubtractorMOG2(30, 16, false);
     /* https://blog.csdn.net/m0_37901643/article/details/72841289 */
     /* Default variance of each gaussian component 15 / 75 / 75 */ 
     //cout << bsModel->getVarInit() << " / " << bsModel->getVarMax() << " / " << bsModel->getVarMax() << endl;
