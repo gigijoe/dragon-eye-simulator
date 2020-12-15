@@ -49,6 +49,8 @@ using std::chrono::microseconds;
 #define MIN_COURSE_LENGTH            120    /* Minimum course length of RF trigger after detection of cross line */
 #define MIN_TARGET_TRACKED_COUNT     3      /* Minimum target tracked count of RF trigger after detection of cross line */
 
+#define NEW_TARGET_RESTRICTION
+
 #define VIDEO_INPUT_FILE
 
 #define VIDEO_OUTPUT_SCREEN
@@ -77,12 +79,12 @@ static inline bool ContoursSortByArea(vector<cv::Point> contour1, vector<cv::Poi
     return (cv::contourArea(contour1) > cv::contourArea(contour2)); /* Area */
 }  
 
-inline void writeText( Mat & mat, const string text )
+inline void writeText( Mat & mat, const string text, const Point textOrg)
 {
    int fontFace = FONT_HERSHEY_SIMPLEX;
    double fontScale = 1;
    int thickness = 1;  
-   Point textOrg( 10, 40 );
+   //Point textOrg( 10, 40 );
    putText( mat, text, textOrg, fontFace, fontScale, Scalar(0, 0, 0), thickness, cv::LINE_8 );
 }
 
@@ -263,14 +265,14 @@ public:
                         break;
                 }
 
-                if(cv::norm(r2.tl()-rr->tl()) < (rr->width + rr->height) / 2) { /* Target tracked with velocity and Euclidean distance ... */
-                    //if(t->DotProduct(rr->tl()) >= 0) /* Two vector less than 90 degree */
+                if(cv::norm(r2.tl()-rr->tl()) < (rr->width + rr->height)) { /* Target tracked with velocity and Euclidean distance ... */
+                    if(t->DotProduct(rr->tl()) >= 0) /* Two vector less than 90 degree */
                         break;
                 }
             }
             if(rr == roiRect.end()) { /* Target missing ... */
                 for(rr=roiRect.begin();rr!=roiRect.end();rr++) { /* */
-                    if(cv::norm(r2.tl()-rr->tl()) < (rr->width + rr->height)) { /* Target tracked with velocity and Euclidean distance ... */
+                    if(cv::norm(r2.tl()-rr->tl()) < ((rr->width + rr->height) * 2)) { /* Target tracked with velocity and Euclidean distance ... */
                         if(t->DotProduct(rr->tl()) >= 0) /* Two vector less than 90 degree */
                             break;
                     }
@@ -552,11 +554,15 @@ int main(int argc, char**argv)
     cy = capFrame.rows-1;
 
     Tracker tracker;
-    //tracker.NewTargetRestriction(Rect(160, 1080, 400, 200));
+
+#ifdef NEW_TARGET_RESTRICTION    
 #ifdef VIDEO_INPUT_FILE
-    tracker.NewTargetRestriction(Rect(cx - 200, cy - 200, 400, 200));
+    //tracker.NewTargetRestriction(Rect(160, 1080, 400, 200));
+    //tracker.NewTargetRestriction(Rect(cx - 200, cy - 200, 400, 200));
+    tracker.NewTargetRestriction(Rect(cx - 360, cy - 200, 720, 200));
 #else
     tracker.NewTargetRestriction(Rect(cy - 200, cx - 200, 400, 200));
+#endif
 #endif
 
 #if defined(VIDEO_OUTPUT_FILE)
@@ -623,8 +629,11 @@ int main(int argc, char**argv)
             rectangle( outFrame, rr->tl(), rr->br(), Scalar(0, 255, 0), 2, 8, 0 );
         }
 
+#ifdef NEW_TARGET_RESTRICTION    
         Rect nr = tracker.NewTargetRestriction();
         rectangle( outFrame, nr.tl(), nr.br(), Scalar(127, 0, 127), 2, 8, 0 );
+        writeText( outFrame, "New Target Restriction Area", Point(cx - 200, cy - 200));
+#endif
 #endif
 
         tracker.Update(roiRect);
@@ -663,7 +672,7 @@ int main(int argc, char**argv)
 #if defined(VIDEO_OUTPUT_SCREEN) || defined(VIDEO_OUTPUT_FILE)
         char str[32];
         snprintf(str, 32, "FPS : %.2lf", fps);
-        writeText(outFrame, string(str));
+        writeText(outFrame, string(str), Point( 10, 40 ));
 #if defined(VIDEO_OUTPUT_FILE)
         videoWriterQueue.push(outFrame.clone());
 #endif
