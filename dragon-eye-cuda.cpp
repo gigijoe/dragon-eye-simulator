@@ -179,17 +179,22 @@ public:
         return v1.dot(v2) / (norm(v1) * norm(v1));
     }
 
-    void Draw(Mat & outFrame) {
+    void Draw(Mat & outFrame, bool drawAll = false) {
         Rect r = LastRect();
         rectangle( outFrame, r.tl(), r.br(), Scalar( 255, 0, 0 ), 2, 8, 0 );
 
+        //RNG rng(12345);
         if(m_rects.size() > 1) { /* Minimum 2 points ... */
             for(int i=0;i<m_rects.size()-1;i++) {
                 Point p0 = m_rects[i].tl();
                 Point p1 = m_rects[i+1].tl();
                 line(outFrame, p0, p1, Scalar(0, 0, 255), 1);
+                //Scalar color = Scalar( rng.uniform(0, 255), rng.uniform(0,255), rng.uniform(0,255) );
+                //line(outFrame, p0, p1, color, 1);
                 //Point v = p1 - p0;
                 //printf("[%d,%d]\n", v.x, v.y);
+                if(drawAll)
+                    rectangle( outFrame, m_rects[i].tl(), m_rects[i].br(), Scalar( 196, 0, 0 ), 2, 8, 0 );
             }
         }        
     }
@@ -228,9 +233,16 @@ class Tracker
 private:
     unsigned long m_frameTick;
     list< Target > m_targets;
+    Rect m_newTargetRestrictionRect;
 
 public:
     Tracker() : m_frameTick(0) {}
+
+    void NewTargetRestriction(const Rect & r) {
+        m_newTargetRestrictionRect = r;
+    }
+
+    Rect NewTargetRestriction() const {   return m_newTargetRestrictionRect; }
 
     void Update(list< Rect > & roiRect) {
         for(list< Target >::iterator t=m_targets.begin();t!=m_targets.end();) { /* Try to find lost targets */
@@ -266,22 +278,11 @@ public:
             }
 
             if(rr == roiRect.end()) { /* Target missing ... */
-                bool ignoreMissingTarget = false;
-                if(t->m_rects.size() <= MAX_NUM_FRAME_MISSING_TARGET) { 
-                    for(int j=0;j<t->m_vectors.size();j++) {
-                        Point p = t->m_vectors[j];
-                        if(p.x == 0 && p.y == 0) { /* With none moving behavior. Maybe fake signal ... */
-                            ignoreMissingTarget = true;
-                            break;
-                        }
-                    }
-                }
-                if(m_frameTick - t->FrameTick() > MAX_NUM_FRAME_MISSING_TARGET || /* Target still missing for over X frames */
-                    ignoreMissingTarget) { 
+                if(m_frameTick - t->FrameTick() > MAX_NUM_FRAME_MISSING_TARGET) { /* Target still missing for over X frames */
 #if 1            
                     Point p = t->m_rects.back().tl();
-                    //printf("lost target : %d, %d\n", p.x, p.y);
-                    printf("lost target : %d, %d\n", t->m_velocity.x, t->m_velocity.y);
+                    printf("lost target : %d, %d\n", p.x, p.y);
+                    //printf("lost target : %d, %d\n", t->m_velocity.x, t->m_velocity.y);
 #endif          
                     t = m_targets.erase(t); /* Remove tracing target */
                     continue;
@@ -293,7 +294,10 @@ public:
             t++;
         }
 
-        for(list<Rect>::iterator rr=roiRect.begin();rr!=roiRect.end();rr++) {    
+        for(list<Rect>::iterator rr=roiRect.begin();rr!=roiRect.end();rr++) {
+            if((m_newTargetRestrictionRect & *rr).area() > 0)
+                continue;
+
             m_targets.push_back(Target(*rr, m_frameTick));
 #if 1            
             printf("new target : %d, %d\n", rr->tl().x, rr->tl().y);
@@ -536,8 +540,6 @@ int main(int argc, char**argv)
     }
 #endif
 
-    Tracker tracker;
-
     int cx, cy;
     while(1) {
         if(cap.read(capFrame))
@@ -548,6 +550,14 @@ int main(int argc, char**argv)
 
     cx = (capFrame.cols / 2) - 1;
     cy = capFrame.rows-1;
+
+    Tracker tracker;
+    //tracker.NewTargetRestriction(Rect(160, 1080, 400, 200));
+#ifdef VIDEO_INPUT_FILE
+    tracker.NewTargetRestriction(Rect(cx - 200, cy - 200, 400, 200));
+#else
+    tracker.NewTargetRestriction(Rect(cy - 200, cx - 200, 400, 200));
+#endif
 
 #if defined(VIDEO_OUTPUT_FILE)
     thread outThread(&VideoWriterThread, capFrame.cols, capFrame.rows);
@@ -612,6 +622,9 @@ int main(int argc, char**argv)
             //Scalar color = Scalar( rng.uniform(0, 255), rng.uniform(0,255), rng.uniform(0,255) );
             rectangle( outFrame, rr->tl(), rr->br(), Scalar(0, 255, 0), 2, 8, 0 );
         }
+
+        Rect nr = tracker.NewTargetRestriction();
+        rectangle( outFrame, nr.tl(), nr.br(), Scalar(127, 0, 127), 2, 8, 0 );
 #endif
 
         tracker.Update(roiRect);
@@ -621,6 +634,7 @@ int main(int argc, char**argv)
         for(list< Target >::iterator t=targets.begin();t!=targets.end();t++) {
 #if defined(VIDEO_OUTPUT_SCREEN) || defined(VIDEO_OUTPUT_FILE)
             t->Draw(outFrame);
+            //t->Draw(outFrame, t->TriggerCount());
 #endif
             if(t->ArcLength() > MIN_COURSE_LENGTH && 
                 t->RectCount() > MIN_TARGET_TRACKED_COUNT) {
