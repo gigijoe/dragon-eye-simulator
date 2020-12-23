@@ -1,6 +1,6 @@
-# dragon-eye-cuda - F3F automatic base simulator
+# dragon-eye-simulator - F3F automatic base simulator
 
-The intention of this project is to testing algorithm of F3F automatic base on PC. The input source is 720p or 1080p H.264 video file (.mp4 or .mkv). The output can be display on screen and save to H.264 video file (.mp4 or .mkv). Further more it can also display intermediate processing frame on screen. So, it's a good tool for development.
+The intention of this project is to testing algorithm of F3F automatic base on PC. The input source is H.264 / H.265 video file (.mp4 or .mkv). The output can be display on screen and save to H.264 video file (.mp4 or .mkv). Further more it can also display intermediate processing frame on screen. So, it's a good tool for development.
 
 ![Alt text](Screenshot.png?raw=true "Screenshot")
 
@@ -34,7 +34,7 @@ $ mkdir build
 $ cd build
 $ cmake ../
 $ make
-$ ./dragon-eye-cuda ../video/baseB001.mkv
+$ ./dragon-eye-simulator ../video/baseB001.mkv
 ```
 
 * Press key 'P' to pause / continue
