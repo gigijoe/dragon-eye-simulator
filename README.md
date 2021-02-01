@@ -65,3 +65,8 @@ If output result to file
 ## Reference
 
 [OpenCV3学习（10.3）基于高斯混合模型的背景建模BackgroundSubtractorMOG/MOG2](https://blog.csdn.net/qq_30815237/article/details/87120195)
+
+## Donate
+
+[![paypal](https://www.paypalobjects.com/en_US/i/btn/btn_donateCC_LG.gif)](paypal.me/stevegigijoe)
+
