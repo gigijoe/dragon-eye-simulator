@@ -62,4 +62,6 @@ If output result to file
 
 [Video 3](https://youtu.be/fjrS-nNDypw)
 
+## Reference
 
+[OpenCV3学习（10.3）基于高斯混合模型的背景建模BackgroundSubtractorMOG/MOG2](https://blog.csdn.net/qq_30815237/article/details/87120195)

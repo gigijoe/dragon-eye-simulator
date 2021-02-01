@@ -254,7 +254,7 @@ public:
             unsigned long f = m_frameTick - t->FrameTick();
             r2.x += t->m_velocity.x * f;
             r2.y += t->m_velocity.y * f;
-            for(rr=roiRect.begin();rr!=roiRect.end();rr++) {
+            for(rr=roiRect.begin();rr!=roiRect.end();++rr) {
                 if((r1 & *rr).area() > 0) { /* Target tracked ... */
                     //if(t->DotProduct(rr->tl()) >= 0) /* Two vector less than 90 degree */
                         break;                
@@ -271,7 +271,7 @@ public:
                 }
             }
             if(rr == roiRect.end()) { /* Target missing ... */
-                for(rr=roiRect.begin();rr!=roiRect.end();rr++) { /* */
+                for(rr=roiRect.begin();rr!=roiRect.end();++rr) { /* */
                     if(cv::norm(r2.tl()-rr->tl()) < ((rr->width + rr->height) * 2)) { /* Target tracked with velocity and Euclidean distance ... */
                         if(t->DotProduct(rr->tl()) >= 0) /* Two vector less than 90 degree */
                             break;
@@ -296,7 +296,7 @@ public:
             t++;
         }
 
-        for(list<Rect>::iterator rr=roiRect.begin();rr!=roiRect.end();rr++) {
+        for(list<Rect>::iterator rr=roiRect.begin();rr!=roiRect.end();++rr) {
             if((m_newTargetRestrictionRect & *rr).area() > 0)
                 continue;
 
@@ -624,7 +624,7 @@ int main(int argc, char**argv)
 
 #if defined(VIDEO_OUTPUT_SCREEN) || defined(VIDEO_OUTPUT_FILE)
         RNG rng(12345);
-        for(list<Rect>::iterator rr=roiRect.begin();rr!=roiRect.end();rr++) {
+        for(list<Rect>::iterator rr=roiRect.begin();rr!=roiRect.end();++rr) {
             //Scalar color = Scalar( rng.uniform(0, 255), rng.uniform(0,255), rng.uniform(0,255) );
             rectangle( outFrame, rr->tl(), rr->br(), Scalar(0, 255, 0), 2, 8, 0 );
         }
@@ -640,12 +640,15 @@ int main(int argc, char**argv)
 
         list< Target > & targets = tracker.TargetList();
 
-        for(list< Target >::iterator t=targets.begin();t!=targets.end();t++) {
+        for(list< Target >::iterator t=targets.begin();t!=targets.end();++t) {
 #if defined(VIDEO_OUTPUT_SCREEN) || defined(VIDEO_OUTPUT_FILE)
             t->Draw(outFrame);
             //t->Draw(outFrame, t->TriggerCount());
 #endif
-            if(t->ArcLength() > MIN_COURSE_LENGTH && 
+            bool doTrigger = false;
+            if(t->TriggerCount() > 0 && t->TriggerCount() < MAX_NUM_TRIGGER) {
+                doTrigger = true;
+            } else if(t->ArcLength() > MIN_COURSE_LENGTH && 
                 t->RectCount() > MIN_TARGET_TRACKED_COUNT) {
 #ifdef VIDEO_INPUT_FILE
                 if((t->BeginPoint().x > cx && t->EndPoint().x <= cx) ||
@@ -655,17 +658,23 @@ int main(int argc, char**argv)
                     (t->BeginPoint().y < cy && t->EndPoint().y >= cy)) {
 #endif //VIDEO_INPUT_FILE
                     if(t->TriggerCount() < MAX_NUM_TRIGGER) { /* Triggle 4 times maximum  */
-#if defined(VIDEO_OUTPUT_SCREEN) || defined(VIDEO_OUTPUT_FILE)
-#ifdef VIDEO_INPUT_FILE
-                        line(outFrame, Point(cx, 0), Point(cx, cy), Scalar(0, 0, 255), 3);
-#else
-                        line(outFrame, Point(0, cy), Point(cx, cy), Scalar(0, 0, 255), 3);
-#endif //VIDEO_INPUT_FILE
-#endif //VIDEO_OUTPUT_FRAME
-                        printf("T R I G G E R - %d\n", t->TriggerCount());
-                        t->Trigger();
+                        doTrigger = true;
                     }
                 }
+            }
+
+            if(doTrigger) {
+#if defined(VIDEO_OUTPUT_SCREEN) || defined(VIDEO_OUTPUT_FILE)
+#ifdef VIDEO_INPUT_FILE
+                line(outFrame, Point(cx, 0), Point(cx, cy), Scalar(0, 0, 255), 3);
+#else
+                line(outFrame, Point(0, cy), Point(cx, cy), Scalar(0, 0, 255), 3);
+#endif //VIDEO_INPUT_FILE
+#endif //VIDEO_OUTPUT_FRAME
+                printf("T R I G G E R - %d\n", t->TriggerCount());
+                t->Trigger();
+
+                break; /* Has been trigger, ignore other targets */           
             }
         }        
 
