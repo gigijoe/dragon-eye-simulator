@@ -49,7 +49,7 @@ using std::chrono::microseconds;
 #define MIN_COURSE_LENGTH            120    /* Minimum course length of RF trigger after detection of cross line */
 #define MIN_TARGET_TRACKED_COUNT     3      /* Minimum target tracked count of RF trigger after detection of cross line */
 
-#define NEW_TARGET_RESTRICTION
+#undef NEW_TARGET_RESTRICTION
 
 #define VIDEO_INPUT_FILE
 
@@ -72,12 +72,6 @@ void sig_handler(int signo)
 /*
 *
 */
-
-static inline bool ContoursSortByArea(vector<cv::Point> contour1, vector<cv::Point> contour2)  
-{  
-    //return (contour1.size() > contour2.size()); /* Outline length */
-    return (cv::contourArea(contour1) > cv::contourArea(contour2)); /* Area */
-}  
 
 inline void writeText( Mat & mat, const string text, const Point textOrg)
 {
@@ -414,7 +408,10 @@ void contour_moving_object(Mat & frame, Mat & foregroundMask, list<Rect> & roiRe
     vector< Vec4i > hierarchy;
 //  findContours(foregroundMask, contours, hierarchy, RETR_TREE, CHAIN_APPROX_NONE);
     findContours(foregroundMask, contours, hierarchy, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
-    sort(contours.begin(), contours.end(), ContoursSortByArea); /* Contours sort by area, controus[0] is largest */
+    sort(contours.begin(), contours.end(), [](vector<cv::Point> contour1, vector<cv::Point> contour2) {  
+            //return (contour1.size() > contour2.size()); /* Outline length */
+            return (cv::contourArea(contour1) > cv::contourArea(contour2)); /* Area */
+        }); /* Contours sort by area, controus[0] is largest */
 
     vector<Rect> boundRect( contours.size() );
     for(int i=0; i<contours.size(); i++) {
@@ -455,7 +452,7 @@ void contour_moving_object(Mat & frame, Mat & foregroundMask, list<Rect> & roiRe
 
 void extract_moving_object(Mat & frame, 
     Mat & elementErode, Mat & elementDilate, 
-    Ptr<cuda::Filter> & erodeFilter, Ptr<cuda::Filter> & dilateFilter, Ptr<cuda::Filter> & gaussianFilter, 
+    Ptr<cuda::Filter> & erodeFilter, Ptr<cuda::Filter> & dilateFilter, 
     Ptr<cuda::BackgroundSubtractorMOG2> & bsModel, 
     list<Rect> & roiRect, int y_offset = 0)
 {
@@ -464,8 +461,6 @@ void extract_moving_object(Mat & frame,
     cuda::GpuMat gpuForegroundMask;
 
     gpuFrame.upload(frame); 
-    // pass the frame to background bsGrayModel
-    //gaussianFilter->apply(gpuFrame, gpuFrame);
     bsModel->apply(gpuFrame, gpuForegroundMask, 0.05);
     //cuda::threshold(gpuForegroundMask, gpuForegroundMask, 10.0, 255.0, THRESH_BINARY);
 #if 1 /* Run with GPU */
@@ -479,11 +474,11 @@ void extract_moving_object(Mat & frame,
 #endif
 
 #ifdef VIDEO_OUTPUT_SCREEN
-        Mat tFrame;
-        foregroundMask.copyTo(tFrame);
-        resize(tFrame, tFrame, Size(tFrame.cols * 3 / 4, tFrame.rows * 3 / 4));
-        namedWindow("FG Frame", WINDOW_AUTOSIZE);
-        imshow("FG Frame", tFrame);
+    Mat tFrame;
+    foregroundMask.copyTo(tFrame);
+    resize(tFrame, tFrame, Size(tFrame.cols * 3 / 4, tFrame.rows * 3 / 4));
+    namedWindow("FG Frame", WINDOW_AUTOSIZE);
+    imshow("FG Frame", tFrame);
 #endif
 
     contour_moving_object(frame, foregroundMask, roiRect, y_offset);
@@ -558,8 +553,8 @@ int main(int argc, char**argv)
 #ifdef NEW_TARGET_RESTRICTION    
 #ifdef VIDEO_INPUT_FILE
     //tracker.NewTargetRestriction(Rect(160, 1080, 400, 200));
-    //tracker.NewTargetRestriction(Rect(cx - 200, cy - 200, 400, 200));
-    tracker.NewTargetRestriction(Rect(cx - 360, cy - 200, 720, 200));
+    tracker.NewTargetRestriction(Rect(cx - 200, cy - 200, 400, 200));
+    //tracker.NewTargetRestriction(Rect(cx - 360, cy - 200, 720, 200));
 #else
     tracker.NewTargetRestriction(Rect(cy - 200, cx - 200, 400, 200));
 #endif
@@ -590,7 +585,6 @@ int main(int argc, char**argv)
     bsModel->setVarInit(15);
     bsModel->setVarMax(20);
     bsModel->setVarMin(4);
-    Ptr<cuda::Filter> gaussianFilter = cuda::createGaussianFilter(CV_8UC1, CV_8UC1, Size(5, 5), 0);
 
     steady_clock::time_point t1(steady_clock::now());
 
@@ -620,7 +614,7 @@ int main(int argc, char**argv)
         Mat grayFrame, roiFrame;
         cvtColor(capFrame, grayFrame, COLOR_BGR2GRAY);
 
-        extract_moving_object(grayFrame, elementErode, elementDilate, erodeFilter, dilateFilter, gaussianFilter, bsModel, roiRect);
+        extract_moving_object(grayFrame, elementErode, elementDilate, erodeFilter, dilateFilter, bsModel, roiRect);
 
 #if defined(VIDEO_OUTPUT_SCREEN) || defined(VIDEO_OUTPUT_FILE)
         RNG rng(12345);
