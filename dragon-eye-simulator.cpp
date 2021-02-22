@@ -594,7 +594,10 @@ int main(int argc, char**argv)
 
     cvtColor(capFrame, bgFrame, COLOR_BGR2GRAY);
 
+    uint64_t loopCount = 0;
+
     while(cap.read(capFrame)) {
+        ++loopCount;
 #if 0
         /* (contrast) alpha = 2.2, (brightness) beta = 50 */   
         capFrame.convertTo(capFrame, -1, 2.2, 50);
@@ -708,10 +711,11 @@ int main(int argc, char**argv)
             dt_us = static_cast<double>(duration_cast<microseconds>(t2 - t1).count());
         }
 #endif
-        //std::cout << (dt_us / 1000.0) << " ms" << std::endl;
-        fps = (1000000.0 / dt_us);
-        std::cout << "FPS : " << fixed  << setprecision(2) <<  fps << std::endl;
-
+        if(loopCount > 0 && loopCount % 30 == 0) {
+            //std::cout << (dt_us / 1000.0) << " ms" << std::endl;
+            fps = (1000000.0 / dt_us);
+            std::cout << "FPS : " << fixed  << setprecision(2) <<  fps << std::endl;
+        }
         t1 = steady_clock::now();
     }
 
