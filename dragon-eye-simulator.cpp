@@ -44,7 +44,7 @@ using std::chrono::microseconds;
 
 #define MAX_NUM_TARGET                  6
 #define MAX_NUM_TRIGGER                 1
-#define MAX_NUM_FRAME_MISSING_TARGET    4
+#define MAX_NUM_FRAME_MISSING_TARGET    6
 
 #define MIN_COURSE_LENGTH               120    /* Minimum course length of RF trigger after detection of cross line */
 #define MIN_TARGET_TRACKED_COUNT        4      /* Minimum target tracked count of RF trigger after detection of cross line (4 * 33ms = 132ms) */
@@ -109,7 +109,6 @@ protected:
 
         /* A.B = |A||B|cos() */
         /* cos() = A.B / |A||B| */
-
         return v1.dot(v2) / (norm(v1) * norm(v2));
     }
 
@@ -182,7 +181,6 @@ public:
         size_t i = m_rects.size();
         if(i < 2)
             return 0;
-
         i--;
         Point v[2];
         v[0].x = p.x - m_rects[i].tl().x;
@@ -197,7 +195,6 @@ public:
         size_t i = m_rects.size();
         if(i < 2)
             return 0;
-
         --i;
         Point v1, v2;
         v1.x = p.x - m_rects[i].tl().x;
@@ -213,7 +210,6 @@ public:
     void Draw(Mat & outFrame, bool drawAll = false) {
         Rect r = LastRect();
         rectangle( outFrame, r.tl(), r.br(), Scalar( 255, 0, 0 ), 2, 8, 0 );
-        //writeText( outFrame, "target", r.tl());
 
         //RNG rng(12345);
         if(m_rects.size() > 1) { /* Minimum 2 points ... */
@@ -331,14 +327,23 @@ public:
             if(rr == roiRect.end()) { /* Target missing ... */
                 for(rr=roiRect.begin();rr!=roiRect.end();++rr) { /* */
                     double a = t->CosineAngle(rr->tl());
-                    if((a > -(M_PI * 1 / 32) && a < (M_PI * 1 / 32)) &&
-                        cv::norm(r2.tl()-rr->tl()) < ((rr->width + rr->height) * 2)) {
+                    double n = cv::norm(r2.tl()-rr->tl());
+                    if(a > 0.7071 && 
+                        n < (rr->width + rr->height)) { /* cos(PI/4) */
+                        break;
+                    }                    
+                    if(a > 0.8587 && 
+                        n < ((rr->width + rr->height) * 2)) { /* cos(PI/6) */
+                        break;
+                    }                    
+                    if(a > 0.9659 && 
+                        n < ((rr->width + rr->height) * 4)) { /* cos(PI/6) */
                         break;
                     }                    
                 }
             }
 #endif
-#if 0            
+#if 0
             if(rr == roiRect.end()) { /* Target missing ... */
                 for(rr=roiRect.begin();rr!=roiRect.end();++rr) { /* */
                     if(cv::norm(r2.tl()-rr->tl()) < ((rr->width + rr->height) * 2)) { /* Target tracked with velocity and Euclidean distance ... */
@@ -751,8 +756,8 @@ int main(int argc, char**argv)
 
         list< Target > & targets = tracker.TargetList();
 
-        list< list< Rect > > & newTargetHistory = tracker.NewTargetHistory();
 #if defined(VIDEO_OUTPUT_SCREEN) || defined(VIDEO_OUTPUT_FILE)
+        list< list< Rect > > & newTargetHistory = tracker.NewTargetHistory();
         for(auto & it : newTargetHistory) {
             for(auto & r : it) {
                 rectangle( outFrame, r.tl(), r.br(), Scalar(127, 127, 0), 2, 8, 0 );
@@ -763,7 +768,6 @@ int main(int argc, char**argv)
         for(list< Target >::iterator t=targets.begin();t!=targets.end();++t) {
 #if defined(VIDEO_OUTPUT_SCREEN) || defined(VIDEO_OUTPUT_FILE)
             t->Draw(outFrame);
-            //t->Draw(outFrame, t->TriggerCount());
 #endif
             if(t->TriggerCount() > 0 && t->TriggerCount() < MAX_NUM_TRIGGER) {
                 doTrigger = true;
