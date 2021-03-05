@@ -128,14 +128,13 @@ public:
     }
 
     void Update(Rect & roi, unsigned long frameTick) {
-        if(m_rects.size() > 0)
-            m_arcLength += norm(roi.tl() - m_rects.back().tl());
-
-        if(m_rects.size() >= 1) {
+        if(m_rects.size() > 0) {
             Point p = roi.tl() - m_rects.back().tl();
+            double v = norm(p);
+
+            m_arcLength += v;
             m_vectors.push_back(p);
 
-            double v = norm(p);
             if(m_rects.size() == 1) {
                 m_maxVector = v;
                 m_minVector = v;
@@ -306,44 +305,100 @@ public:
             unsigned long f = m_frameTick - t->FrameTick();
             r2.x += t->m_velocity.x * f;
             r2.y += t->m_velocity.y * f;
+
+            double n0 = 0;
+            if(t->m_vectors.size() > 0)
+                n0 = cv::norm(t->m_velocity);
+            
             for(rr=roiRect.begin();rr!=roiRect.end();++rr) {
+
+                double n1 = cv::norm(rr->tl() - r1.tl());
+#if 1
+                if(n1 > (CAMERA_HEIGHT / 2))
+                    continue; /* Too far */
+
+                if(t->m_vectors.size() > 1) {
+                    double n = cv::norm(t->m_vectors.back());
+                    if((n1 > (n * 10) || n > (n1 * 10)))
+                        continue; /* Too far */
+                }
+#endif
                 if((r1 & *rr).area() > 0) { /* Target tracked ... */
                     //if(t->DotProduct(rr->tl()) >= 0) /* Two vector less than 90 degree */
                         break;                
                 }
 
-                if((r2 & *rr).area() > 0) { /* Target tracked with velocity ... */
-                    //if(t->DotProduct(rr->tl()) >= 0) /* Two vector less than 90 degree */
-                        break;
+                if(t->m_vectors.size() > 0) {
+                    if((r2 & *rr).area() > 0) { /* Target tracked with velocity ... */
+                        //if(t->DotProduct(rr->tl()) >= 0) /* Two vector less than 90 degree */
+                            break;
+                    }
                 }
-#if 1
-                if(cv::norm(r2.tl()-rr->tl()) < (rr->width + rr->height)) { /* Target tracked with velocity and Euclidean distance ... */
-                    if(t->DotProduct(rr->tl()) >= 0) /* Two vector less than 90 degree */
+
+                if(t->m_vectors.size() == 0) { /* new target with zero velocity */
+                    if(n1 < (rr->width + rr->height) * 4) { /* Target tracked with Euclidean distance ... */
                         break;
-                }
+                    }
+                } else if(n1 < (n0 * f)) { /* Target tracked with velocity and Euclidean distance ... */
+#ifdef VIDEO_INPUT_FILE
+                    if(rr->y >= (CAMERA_WIDTH * 4 / 5)) {
+#else
+                    if(rr->x >= (CAMERA_WIDTH * 4 / 5)) {
 #endif
+                        double a = t->CosineAngle(rr->tl());
+                        if(a > 0.9659) /* cos(PI/12) */
+                            break;
+                    } else {
+                        double a = t->CosineAngle(rr->tl());
+                        if(a > 0.8587) /* cos(PI/6) */
+                            break;
+                    }
+                }
             }
 #if 1
-            if(rr == roiRect.end()) { /* Target missing ... */
+            if(rr == roiRect.end() && 
+                t->m_vectors.size() > 0) { /* Target missing ... */
                 for(rr=roiRect.begin();rr!=roiRect.end();++rr) { /* */
+                    double n1 = cv::norm(rr->tl() - r1.tl());
+#if 1
+                    if(n1 > (CAMERA_HEIGHT / 2))
+                        continue; /* Too far */
+
+                    double n = cv::norm(t->m_vectors.back());
+                    if((n1 > (n * 10) || n > (n1 * 10)))
+                        continue; /* Too far */
+#endif
                     double a = t->CosineAngle(rr->tl());
-                    double n = cv::norm(r2.tl()-rr->tl());
-                    if(a > 0.7071 && 
-                        n < (rr->width + rr->height)) { /* cos(PI/4) */
+                    double n2 = cv::norm(rr->tl() - r2.tl());
+#if 0
+                    if(a > 0.5 && 
+                        n2 < (n0 * 1)) { /* cos(PI/3) */
                         break;
-                    }                    
+                    }               
+
                     if(a > 0.8587 && 
-                        n < ((rr->width + rr->height) * 2)) { /* cos(PI/6) */
+                        n2 < (n0 * 2)) { /* cos(PI/6) */
                         break;
-                    }                    
-                    if(a > 0.9659 && 
-                        n < ((rr->width + rr->height) * 4)) { /* cos(PI/6) */
-                        break;
-                    }                    
+                    }
+#endif
+#ifdef VIDEO_INPUT_FILE
+                    if(rr->y >= (CAMERA_WIDTH * 4 / 5)) {
+#else
+                    if(rr->x >= (CAMERA_WIDTH * 4 / 5)) {
+#endif
+                        if(a > 0.9659 && 
+                            n2 < (n0)) { /* cos(PI/12) */
+                            break;
+                        }                        
+                    } else {
+                        if(a > 0.9659 && 
+                            n2 < (n0 * 2)) { /* cos(PI/12) */
+                            break;
+                        }
+                    }
                 }
             }
-#endif
-#if 0
+#else
             if(rr == roiRect.end()) { /* Target missing ... */
                 for(rr=roiRect.begin();rr!=roiRect.end();++rr) { /* */
                     if(cv::norm(r2.tl()-rr->tl()) < ((rr->width + rr->height) * 2)) { /* Target tracked with velocity and Euclidean distance ... */
@@ -387,22 +442,23 @@ public:
 #endif
                         continue;
                     if((r & *rr).area() > 0) { /* new target overlap previous new target */
-/*                        
-                        rr->x = rr->x - rr->width;
-                        rr->y = rr->y - rr->height;
-                        rr->width = rr->width << 1;
-                        rr->height = rr->height << 1;
-*/                        
                         ++overlap_count;
                     }
                 }
             }
 #ifdef VIDEO_INPUT_FILE
-            if(rr->y >= (CAMERA_WIDTH * 4 / 5))
+            if(rr->y >= (CAMERA_WIDTH * 4 / 5)) {
 #else
-            if(rr->x >= (CAMERA_WIDTH * 4 / 5))
+            if(rr->x >= (CAMERA_WIDTH * 4 / 5)) {
 #endif
+                if(overlap_count > 0) {
+                    rr->x = rr->x - rr->width;
+                    rr->y = rr->y - rr->height;
+                    rr->width = rr->width << 1;
+                    rr->height = rr->height << 1;
+                }
                 newTargetList.push_back(*rr);
+            }
 
             if(overlap_count < 2) {
                 m_targets.push_back(Target(*rr, m_frameTick));
@@ -414,7 +470,7 @@ public:
         }
 
         m_newTargetsHistory.push_back(newTargetList);
-        if(m_newTargetsHistory.size() >= 60) {
+        if(m_newTargetsHistory.size() >= 90) {
             m_newTargetsHistory.pop_front();
         }
 
@@ -773,11 +829,14 @@ int main(int argc, char**argv)
                 doTrigger = true;
             } else if(t->ArcLength() > MIN_COURSE_LENGTH && 
                 t->RectCount() > MIN_TARGET_TRACKED_COUNT) {
+/*
 #ifdef VIDEO_INPUT_FILE
                 if(t->EndPoint().y >= (CAMERA_WIDTH * 4 / 5) &&
 #else
                 if(t->EndPoint().x >= (CAMERA_WIDTH * 4 / 5) &&
 #endif
+*/
+                if(
                     t->VectorCount() <= 6 &&
                     t->VectorDistortion() >= 40) { /* 最大位移向量與最小位移向量的比例 */
                     printf("Vector distortion %f !!!\n", t->VectorDistortion());
