@@ -49,7 +49,7 @@ using std::chrono::microseconds;
 #define MIN_COURSE_LENGTH               120    /* Minimum course length of RF trigger after detection of cross line */
 #define MIN_TARGET_TRACKED_COUNT        4      /* Minimum target tracked count of RF trigger after detection of cross line (4 * 33ms = 132ms) */
 
-#define NEW_TARGET_RESTRICTION
+#undef NEW_TARGET_RESTRICTION
 
 #define VIDEO_INPUT_FILE
 
@@ -81,8 +81,6 @@ inline void writeText( Mat & mat, const string text, const Point textOrg)
    //Point textOrg( 10, 40 );
    putText( mat, text, textOrg, fontFace, fontScale, Scalar(0, 0, 0), thickness, cv::LINE_8 );
 }
-
-#define RAD2DEG(x)      ((x) * 57.2957795f)     /*!< Radians to degrees converter */
 
 class Target
 {
@@ -208,7 +206,7 @@ public:
 
     void Draw(Mat & outFrame, bool drawAll = false) {
         Rect r = LastRect();
-        rectangle( outFrame, r.tl(), r.br(), Scalar( 255, 0, 0 ), 2, 8, 0 );
+        rectangle( outFrame, r.tl(), r.br(), Scalar( 255, 0, 0 ), 1, 8, 0 );
 
         //RNG rng(12345);
         if(m_rects.size() > 1) { /* Minimum 2 points ... */
@@ -221,18 +219,19 @@ public:
                 //Point v = p1 - p0;
                 //printf("[%d,%d]\n", v.x, v.y);
                 if(drawAll)
-                    rectangle( outFrame, m_rects[i].tl(), m_rects[i].br(), Scalar( 196, 0, 0 ), 2, 8, 0 );
+                    rectangle( outFrame, m_rects[i].tl(), m_rects[i].br(), Scalar( 196, 0, 0 ), 1, 8, 0 );
             }
         }        
     }
 
     void Trigger() { 
-printf("[%lu] arc length = %f, abs length = %f, velocity = %f\n", m_rects.size(), m_arcLength, AbsLength(), norm(m_velocity));
-for(auto v : m_vectors) {
-    printf("%f\t", norm(v));
-}
-printf("\n");
-printf("max vector = %f, min vector = %f\n", m_maxVector, m_minVector);
+        printf("area = %d, arc samples = %lu, arc length = %f, abs length = %f, velocity = %f\n", 
+            AverageArea(), m_rects.size(), m_arcLength, AbsLength(), norm(m_velocity));
+        for(auto v : m_vectors) {
+            printf("%f\t", norm(v));
+        }
+        printf("\n");
+        printf("max vector = %f, min vector = %f\n", m_maxVector, m_minVector);
         m_triggerCount++;
     }
 
@@ -259,7 +258,15 @@ printf("max vector = %f, min vector = %f\n", m_maxVector, m_minVector);
 #endif    
     //inline void Trigger() { m_triggerCount++; }
     inline uint8_t TriggerCount() { return m_triggerCount; }
-    //inline Point & Velocity() { return m_velocity; }
+    inline Point & Velocity() { return m_velocity; }
+    inline double NormVelocity() { return norm(m_velocity); }
+    int AverageArea() {
+        uint32_t a = 0;
+        for(auto r : m_rects) {
+            a += r.area();
+        }
+        return a / m_rects.size();
+    }
     inline size_t RectCount() { return m_rects.size(); }
 
     friend class Tracker;
@@ -381,20 +388,10 @@ public:
                         break;
                     }
 #endif
-#ifdef VIDEO_INPUT_FILE
-                    if(rr->y >= (CAMERA_WIDTH * 4 / 5)) {
-#else
-                    if(rr->x >= (CAMERA_WIDTH * 4 / 5)) {
-#endif
-                        if(a > 0.9659 && 
-                            n2 < (n0)) { /* cos(PI/12) */
-                            break;
-                        }                        
-                    } else {
-                        if(a > 0.9659 && 
-                            n2 < (n0 * 2)) { /* cos(PI/12) */
-                            break;
-                        }
+                    /* This number has been tested by various video. Don't touch it !!! */
+                    if(a > 0.9659 && 
+                        n2 < (n0 * 2)) { /* cos(PI/12) */
+                        break;
                     }
                 }
             }
@@ -599,13 +596,13 @@ void contour_moving_object(Mat & frame, Mat & foregroundMask, list<Rect> & roiRe
             boundRect[i].height < MIN_TARGET_HEIGHT)
             break; /* Rest are small objects, ignore them */
 
+        Mat roiFrame = frame(boundRect[i]);
 #if 1 /* Anti cloud ... */
         double minVal; 
         double maxVal; 
         Point minLoc; 
         Point maxLoc;
 
-        Mat roiFrame = frame(boundRect[i]);
         minMaxLoc(roiFrame, &minVal, &maxVal, &minLoc, &maxLoc ); 
             /* If difference of max and min value of ROI rect is too small then it could be noise such as cloud or sea */
         if((maxVal - minVal) < 24)
@@ -751,7 +748,7 @@ int main(int argc, char**argv)
     Ptr<cuda::Filter> dilateFilter = cuda::createMorphologyFilter(MORPH_DILATE, CV_8UC1, elementDilate);
 
     /* background history count, varThreshold, shadow detection */
-    Ptr<cuda::BackgroundSubtractorMOG2> bsModel = cuda::createBackgroundSubtractorMOG2(30, 16, false);
+    Ptr<cuda::BackgroundSubtractorMOG2> bsModel = cuda::createBackgroundSubtractorMOG2(30, 10, false);
     /* https://blog.csdn.net/m0_37901643/article/details/72841289 */
     /* Default variance of each gaussian component 15 / 75 / 75 */ 
     //cout << bsModel->getVarInit() << " / " << bsModel->getVarMax() << " / " << bsModel->getVarMax() << endl;
@@ -796,13 +793,13 @@ int main(int argc, char**argv)
         //RNG rng(12345);
         for(list<Rect>::iterator rr=roiRect.begin();rr!=roiRect.end();++rr) {
             //Scalar color = Scalar( rng.uniform(0, 255), rng.uniform(0,255), rng.uniform(0,255) );
-            rectangle( outFrame, rr->tl(), rr->br(), Scalar(0, 255, 0), 2, 8, 0 );
+            rectangle( outFrame, rr->tl(), rr->br(), Scalar(0, 255, 0), 1, 8, 0 );
             //writeText( outFrame, "roi", rr->tl());
         }
 
 #ifdef NEW_TARGET_RESTRICTION    
         Rect nr = tracker.NewTargetRestriction();
-        rectangle( outFrame, nr.tl(), nr.br(), Scalar(127, 0, 127), 2, 8, 0 );
+        rectangle( outFrame, nr.tl(), nr.br(), Scalar(127, 0, 127), 1, 8, 0 );
         writeText( outFrame, "New Target Restriction Area", Point(cx - 200, cy - 200));
 #endif
 #endif
@@ -816,7 +813,7 @@ int main(int argc, char**argv)
         list< list< Rect > > & newTargetHistory = tracker.NewTargetHistory();
         for(auto & it : newTargetHistory) {
             for(auto & r : it) {
-                rectangle( outFrame, r.tl(), r.br(), Scalar(127, 127, 0), 2, 8, 0 );
+                rectangle( outFrame, r.tl(), r.br(), Scalar(127, 127, 0), 1, 8, 0 );
             }
         }        
 #endif
@@ -829,29 +826,21 @@ int main(int argc, char**argv)
                 doTrigger = true;
             } else if(t->ArcLength() > MIN_COURSE_LENGTH && 
                 t->RectCount() > MIN_TARGET_TRACKED_COUNT) {
-/*
 #ifdef VIDEO_INPUT_FILE
-                if(t->EndPoint().y >= (CAMERA_WIDTH * 4 / 5) &&
+                if((t->BeginPoint().x > cx && t->EndPoint().x <= cx) ||
+                    (t->BeginPoint().x < cx && t->EndPoint().x >= cx)) {
 #else
-                if(t->EndPoint().x >= (CAMERA_WIDTH * 4 / 5) &&
-#endif
-*/
-                if(
-                    t->VectorCount() <= 6 &&
-                    t->VectorDistortion() >= 40) { /* 最大位移向量與最小位移向量的比例 */
-                    printf("Vector distortion %f !!!\n", t->VectorDistortion());
-                } else {
-
-#ifdef VIDEO_INPUT_FILE
-                    if((t->BeginPoint().x > cx && t->EndPoint().x <= cx) ||
-                        (t->BeginPoint().x < cx && t->EndPoint().x >= cx)) {
-#else
-                    if((t->BeginPoint().y > cy && t->EndPoint().y <= cy) ||
-                        (t->BeginPoint().y < cy && t->EndPoint().y >= cy)) {
+                if((t->BeginPoint().y > cy && t->EndPoint().y <= cy) ||
+                    (t->BeginPoint().y < cy && t->EndPoint().y >= cy)) {
 #endif //VIDEO_INPUT_FILE
-                        if(t->TriggerCount() < MAX_NUM_TRIGGER) { /* Triggle 4 times maximum  */
-                            doTrigger = true;
-                        }
+                    if(t->VectorCount() <= 6 &&
+                        t->VectorDistortion() >= 40) { /* 最大位移向量值與最小位移向量值的比例 */
+                        printf("Velocity distortion %f !!!\n", t->VectorDistortion());
+                    } else if(t->AverageArea() < 150 &&
+                        t->NormVelocity() > 50) {
+                        printf("Bug detected !!! average area = %d, velocity = %f\n", t->AverageArea(), t->NormVelocity());
+                    } else if(t->TriggerCount() < MAX_NUM_TRIGGER) { /* Triggle 4 times maximum  */
+                        doTrigger = true;
                     }
                 }
             }
