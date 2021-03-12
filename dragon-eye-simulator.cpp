@@ -73,6 +73,19 @@ void sig_handler(int signo)
 *
 */
 
+const std::string currentDateTime() {
+    time_t now = time(0);
+    struct tm tstruct;
+    char buf[80];
+    tstruct = *localtime(&now);
+    strftime(buf, sizeof(buf), "%H:%M:%S %m/%d", &tstruct);
+    return buf;
+}
+
+/*
+*
+*/
+
 inline void writeText( Mat & mat, const string text, const Point textOrg)
 {
    int fontFace = FONT_HERSHEY_SIMPLEX;
@@ -168,7 +181,7 @@ public:
 #endif
         m_rects.push_back(roi);
         m_frameTick = frameTick;
-#if 1
+#if 0
         if(m_triggerCount >= MAX_NUM_TRIGGER)
             Reset();
 #endif
@@ -224,15 +237,19 @@ public:
         }        
     }
 
-    void Trigger() { 
-        printf("area = %d, arc samples = %lu, arc length = %f, abs length = %f, velocity = %f\n", 
-            AverageArea(), m_rects.size(), m_arcLength, AbsLength(), norm(m_velocity));
+    void Info() {
+        printf("### samples = %lu, area = %d, arc length = %f, abs length = %f, velocity = %f\n", 
+            m_rects.size(), AverageArea(), m_arcLength, AbsLength(), norm(m_velocity));
+        printf("### max vector = %f, min vector = %f\n", m_maxVector, m_minVector);      
         for(auto v : m_vectors) {
             printf("%f\t", norm(v));
         }
         printf("\n");
-        printf("max vector = %f, min vector = %f\n", m_maxVector, m_minVector);
-        m_triggerCount++;
+        printf("### history\n");
+        for(auto p : m_rects) {
+            printf("(%4d,%4d)<%5d>\t", p.tl().x, p.tl().y, p.area());
+        }
+        printf("\n");
     }
 
     inline size_t VectorCount() { return m_vectors.size(); }
@@ -256,7 +273,7 @@ public:
     inline Point BeginPoint() { return Center(m_rects[0]); }
     inline Point EndPoint() { return Center(m_rects.back()); }
 #endif    
-    //inline void Trigger() { m_triggerCount++; }
+    inline void Trigger() { m_triggerCount++; }
     inline uint8_t TriggerCount() { return m_triggerCount; }
     inline Point & Velocity() { return m_velocity; }
     inline double NormVelocity() { return norm(m_velocity); }
@@ -319,7 +336,15 @@ public:
             
             for(rr=roiRect.begin();rr!=roiRect.end();++rr) {
 
+                if(r1.area() > (rr->area() * 100) ||
+                    rr->area() > (r1.area() * 100))
+                    continue;
+
                 double n1 = cv::norm(rr->tl() - r1.tl());
+/*
+                if(rr->area() < 800 && n1 > 300)
+                    continue;
+*/
 #if 1
                 if(n1 > (CAMERA_HEIGHT / 2))
                     continue; /* Too far */
@@ -343,7 +368,7 @@ public:
                 }
 
                 if(t->m_vectors.size() == 0) { /* new target with zero velocity */
-                    if(n1 < (rr->width + rr->height) * 4) { /* Target tracked with Euclidean distance ... */
+                    if(n1 < (rr->width + rr->height) * 4) { /* Target tracked with Euclidean distance ... */                    
                         break;
                     }
                 } else if(n1 < (n0 * f)) { /* Target tracked with velocity and Euclidean distance ... */
@@ -366,6 +391,11 @@ public:
             if(rr == roiRect.end() && 
                 t->m_vectors.size() > 0) { /* Target missing ... */
                 for(rr=roiRect.begin();rr!=roiRect.end();++rr) { /* */
+
+                    if(r1.area() > (rr->area() * 100) ||
+                        rr->area() > (r1.area() * 100))
+                        continue;
+
                     double n1 = cv::norm(rr->tl() - r1.tl());
 #if 1
                     if(n1 > (CAMERA_HEIGHT / 2))
@@ -389,8 +419,9 @@ public:
                     }
 #endif
                     /* This number has been tested by various video. Don't touch it !!! */
+                    /* Tracking longer distance if target samples is over 20 */
                     if(a > 0.9659 && 
-                        n2 < (n0 * 2)) { /* cos(PI/12) */
+                        n2 < (n0 * (2 + (t->RectCount() > 20 ? 1 : 0)))) { /* cos(PI/12) */
                         break;
                     }
                 }
@@ -406,12 +437,13 @@ public:
             }
 #endif
             if(rr == roiRect.end()) { /* Target missing ... */
-                if(m_frameTick - t->FrameTick() > MAX_NUM_FRAME_MISSING_TARGET) { /* Target still missing for over X frames */
-#if 1            
+                uint32_t compensation = (t->RectCount() / 10); /* Tracking more frames with more sample */
+                if(compensation > 4)
+                    compensation = 4;
+                if(m_frameTick - t->FrameTick() > MAX_NUM_FRAME_MISSING_TARGET + compensation) { /* Target still missing for over X frames */
                     Point p = t->m_rects.back().tl();
                     printf("lost target : %d, %d\n", p.x, p.y);
                     //printf("lost target : %d, %d\n", t->m_velocity.x, t->m_velocity.y);
-#endif          
                     t = m_targets.erase(t); /* Remove tracing target */
                     continue;
                 }
@@ -459,9 +491,7 @@ public:
 
             if(overlap_count < 2) {
                 m_targets.push_back(Target(*rr, m_frameTick));
-#if 1            
                 printf("new target : %d, %d\n", rr->tl().x, rr->tl().y);
-#endif
             } else
                 printf("fake target (%u)\n", overlap_count);
         }
@@ -802,6 +832,7 @@ int main(int argc, char**argv)
         rectangle( outFrame, nr.tl(), nr.br(), Scalar(127, 0, 127), 1, 8, 0 );
         writeText( outFrame, "New Target Restriction Area", Point(cx - 200, cy - 200));
 #endif
+        writeText( outFrame, currentDateTime(), Point(240, 40));
 #endif
         line(outFrame, Point(0, (CAMERA_WIDTH * 4 / 5)), Point(CAMERA_HEIGHT, (CAMERA_WIDTH * 4 / 5)), Scalar(127, 127, 0), 1);
 
@@ -833,12 +864,18 @@ int main(int argc, char**argv)
                 if((t->BeginPoint().y > cy && t->EndPoint().y <= cy) ||
                     (t->BeginPoint().y < cy && t->EndPoint().y >= cy)) {
 #endif //VIDEO_INPUT_FILE
-                    if(t->VectorCount() <= 6 &&
+                    if(t->VectorCount() <= 8 &&
                         t->VectorDistortion() >= 40) { /* 最大位移向量值與最小位移向量值的比例 */
                         printf("Velocity distortion %f !!!\n", t->VectorDistortion());
-                    } else if(t->AverageArea() < 150 &&
+                        t->Info();
+                    } else if(t->AverageArea() < 200 &&
                         t->NormVelocity() > 50) {
                         printf("Bug detected !!! average area = %d, velocity = %f\n", t->AverageArea(), t->NormVelocity());
+                        t->Info();
+                    } else if(t->AverageArea() < 600 &&
+                        t->NormVelocity() > 100) {
+                        printf("Bug detected !!! average area = %d, velocity = %f\n", t->AverageArea(), t->NormVelocity());
+                        t->Info();
                     } else if(t->TriggerCount() < MAX_NUM_TRIGGER) { /* Triggle 4 times maximum  */
                         doTrigger = true;
                     }
@@ -855,6 +892,7 @@ int main(int argc, char**argv)
 #endif //VIDEO_OUTPUT_FRAME
                 printf("T R I G G E R - %d\n", t->TriggerCount());
                 t->Trigger();
+                t->Info();
 
                 break; /* Has been trigger, ignore other targets */           
             }
@@ -869,8 +907,13 @@ int main(int argc, char**argv)
 #endif
 #ifdef VIDEO_OUTPUT_SCREEN
         resize(outFrame, outFrame, Size(outFrame.cols * 3 / 4, outFrame.rows * 3 / 4));
+#ifdef VIDEO_INPUT_FILE        
+        namedWindow(argv[1], WINDOW_AUTOSIZE);
+        imshow(argv[1], outFrame);
+#else
         namedWindow("Out Frame", WINDOW_AUTOSIZE);
         imshow("Out Frame", outFrame);
+#endif
 #endif
 #endif
 #ifdef VIDEO_OUTPUT_SCREEN
