@@ -95,12 +95,42 @@ inline void writeText( Mat & mat, const string text, const Point textOrg)
    putText( mat, text, textOrg, fontFace, fontScale, Scalar(0, 0, 0), thickness, cv::LINE_8 );
 }
 
+/*
+* The PSNR returns a float number, that if the two inputs are similar between 30 and 50 (higher is better).
+*/
+
+double getPSNR_CUDA(const Mat& I1, const Mat& I2)
+{
+    cuda::GpuMat gI1, gI2, gs, t1,t2;
+    gI1.upload(I1);
+    gI2.upload(I2);
+    gI1.convertTo(t1, CV_32F);
+    gI2.convertTo(t2, CV_32F);
+    cuda::absdiff(t1.reshape(1), t2.reshape(1), gs);
+    cuda::multiply(gs, gs, gs);
+    Scalar s = cuda::sum(gs);
+    double sse = s.val[0] + s.val[1] + s.val[2];
+    if( sse <= 1e-10) // for small values return zero
+        return 0;
+    else
+    {
+        double  mse =sse /(double)(gI1.channels() * I1.total());
+        double psnr = 10.0*log10((255*255)/mse);
+        return psnr;
+    }
+}
+
+/*
+*
+*/
+
 class Target
 {
 protected:
     double m_arcLength;
     unsigned long m_frameTick;
     uint8_t m_triggerCount;
+    uint16_t m_bugTriggerCount;
 
     vector< Rect > m_rects;
     vector< Point > m_vectors;
@@ -124,7 +154,7 @@ protected:
     }
 
 public:
-    Target(Rect & roi, unsigned long frameTick) : m_arcLength(0), m_frameTick(frameTick), m_triggerCount(0), m_maxVector(0), m_minVector(0) {
+    Target(Rect & roi, unsigned long frameTick) : m_arcLength(0), m_frameTick(frameTick), m_triggerCount(0), m_bugTriggerCount(0), m_maxVector(0), m_minVector(0) {
         m_rects.push_back(roi);
         m_frameTick = frameTick;
     }
@@ -275,6 +305,10 @@ public:
 #endif    
     inline void Trigger() { m_triggerCount++; }
     inline uint8_t TriggerCount() { return m_triggerCount; }
+
+    inline void BugTrigger() { m_bugTriggerCount++; }
+    inline uint16_t BugTriggerCount() { return m_bugTriggerCount; }
+
     inline Point & Velocity() { return m_velocity; }
     inline double NormVelocity() { return norm(m_velocity); }
     int AverageArea() {
@@ -868,16 +902,31 @@ int main(int argc, char**argv)
                         t->VectorDistortion() >= 40) { /* 最大位移向量值與最小位移向量值的比例 */
                         printf("Velocity distortion %f !!!\n", t->VectorDistortion());
                         t->Info();
-                    } else if(t->AverageArea() < 200 &&
+                    } else if(t->AverageArea() < 144 && /* 12 x 12 */
+                        t->NormVelocity() > 30) {
+                        printf("Bug detected !!! average area = %d, velocity = %f\n", t->AverageArea(), t->NormVelocity());
+                        t->BugTrigger();
+                        t->Info();
+                    } else if(t->AverageArea() < 256 && /* 16 x 16 */
                         t->NormVelocity() > 50) {
                         printf("Bug detected !!! average area = %d, velocity = %f\n", t->AverageArea(), t->NormVelocity());
+                        t->BugTrigger();
                         t->Info();
-                    } else if(t->AverageArea() < 600 &&
+                    } else if(t->AverageArea() < 400 && /* 20 x 20 */
+                        t->NormVelocity() > 75) {
+                        printf("Bug detected !!! average area = %d, velocity = %f\n", t->AverageArea(), t->NormVelocity());
+                        t->BugTrigger();
+                        t->Info();
+                    } else if(t->AverageArea() < 576 && /* 24 x 24 */
                         t->NormVelocity() > 100) {
                         printf("Bug detected !!! average area = %d, velocity = %f\n", t->AverageArea(), t->NormVelocity());
+                        t->BugTrigger();
                         t->Info();
                     } else if(t->TriggerCount() < MAX_NUM_TRIGGER) { /* Triggle 4 times maximum  */
-                        doTrigger = true;
+                        if(t->BugTriggerCount() > 0)
+                            printf("False trigger due to bug trigger count is %u\n", t->BugTriggerCount());
+                        else
+                            doTrigger = true;                            
                     }
                 }
             }
