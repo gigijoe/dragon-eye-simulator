@@ -33,6 +33,7 @@ using namespace std;
 using std::chrono::steady_clock;
 using std::chrono::duration_cast;
 using std::chrono::microseconds;
+using std::chrono::milliseconds;
 
 #define CAMERA_WIDTH 1280
 #define CAMERA_HEIGHT 720
@@ -211,7 +212,7 @@ public:
 #endif
         m_rects.push_back(roi);
         m_frameTick = frameTick;
-#if 0
+#if 1
         if(m_triggerCount >= MAX_NUM_TRIGGER)
             Reset();
 #endif
@@ -903,12 +904,12 @@ int main(int argc, char**argv)
                         printf("Velocity distortion %f !!!\n", t->VectorDistortion());
                         t->Info();
                     } else if(t->AverageArea() < 144 && /* 12 x 12 */
-                        t->NormVelocity() > 30) {
+                        t->NormVelocity() > 25) {
                         printf("Bug detected !!! average area = %d, velocity = %f\n", t->AverageArea(), t->NormVelocity());
                         t->BugTrigger();
                         t->Info();
                     } else if(t->AverageArea() < 256 && /* 16 x 16 */
-                        t->NormVelocity() > 50) {
+                        t->NormVelocity() > 40) {
                         printf("Bug detected !!! average area = %d, velocity = %f\n", t->AverageArea(), t->NormVelocity());
                         t->BugTrigger();
                         t->Info();
@@ -919,6 +920,11 @@ int main(int argc, char**argv)
                         t->Info();
                     } else if(t->AverageArea() < 576 && /* 24 x 24 */
                         t->NormVelocity() > 100) {
+                        printf("Bug detected !!! average area = %d, velocity = %f\n", t->AverageArea(), t->NormVelocity());
+                        t->BugTrigger();
+                        t->Info();
+                    } else if(t->AverageArea() < 900 && /* 30 x 30 */
+                        t->NormVelocity() > 125) {
                         printf("Bug detected !!! average area = %d, velocity = %f\n", t->AverageArea(), t->NormVelocity());
                         t->BugTrigger();
                         t->Info();
@@ -980,6 +986,7 @@ int main(int argc, char**argv)
             break;
 
         steady_clock::time_point t2(steady_clock::now());
+        auto it = t2 - t1;
         double dt_us(static_cast<double>(duration_cast<microseconds>(t2 - t1).count()));
 #if 1
         while(dt_us < 33000) {
@@ -991,7 +998,8 @@ int main(int argc, char**argv)
         if(loopCount > 0 && loopCount % 30 == 0) {
             //std::cout << (dt_us / 1000.0) << " ms" << std::endl;
             fps = (1000000.0 / dt_us);
-            std::cout << "FPS : " << fixed  << setprecision(2) <<  fps << std::endl;
+            //std::cout << "FPS : " << fixed  << setprecision(2) <<  fps << std::endl;
+            std::cout << "FPS : " << fixed  << setprecision(2) <<  fps << " / " << duration_cast<milliseconds>(it).count() << " ms" << std::endl;
         }
         t1 = steady_clock::now();
     }
