@@ -35,22 +35,29 @@ using std::chrono::duration_cast;
 using std::chrono::microseconds;
 using std::chrono::milliseconds;
 
+#ifndef DEBUG
+#define DEBUG
+#endif
+
 #define CAMERA_WIDTH 1280
 #define CAMERA_HEIGHT 720
-#define CAMERA_FPS 60
+#define CAMERA_FPS 30
 #define MIN_TARGET_WIDTH 8
-#define MIN_TARGET_HEIGHT 8
+#define MIN_TARGET_HEIGHT 6
 #define MAX_TARGET_WIDTH 320
 #define MAX_TARGET_HEIGHT 320
 
-#define MAX_NUM_TARGET                  6
+#define MAX_NUM_TARGET                  9
 #define MAX_NUM_TRIGGER                 1
-#define MAX_NUM_FRAME_MISSING_TARGET    6
+#define MAX_NUM_FRAME_MISSING_TARGET    3
 
-#define MIN_COURSE_LENGTH               120    /* Minimum course length of RF trigger after detection of cross line */
-#define MIN_TARGET_TRACKED_COUNT        4      /* Minimum target tracked count of RF trigger after detection of cross line (4 * 33ms = 132ms) */
+#define MIN_COURSE_LENGTH               30    /* Minimum course length of RF trigger after detection of cross line */
+#define MIN_TARGET_TRACKED_COUNT        3      /* Minimum target tracked count of RF trigger after detection of cross line (3 * 33ms = 99ms) */
 
 #undef NEW_TARGET_RESTRICTION
+
+#define FAKE_TARGET_DETECTION           true
+#define BUG_TRIGGER                     true
 
 #define VIDEO_INPUT_FILE
 
@@ -128,18 +135,33 @@ double getPSNR_CUDA(const Mat& I1, const Mat& I2)
 class Target
 {
 protected:
+    uint32_t m_id;
     double m_arcLength;
-    unsigned long m_frameTick;
+    double m_absLength;
+    unsigned long m_lastFrameTick;
     uint8_t m_triggerCount;
     uint16_t m_bugTriggerCount;
 
+    vector< unsigned long > m_frameTicks;
     vector< Rect > m_rects;
     vector< Point > m_vectors;
     double m_maxVector, m_minVector;
     Point m_velocity;
+    Point m_acceleration;
+    int m_averageArea;
+    double m_normVelocity;
+    double m_angleOfTurn;
 
-    Point Center(Rect & r) {
-        return Point(r.tl().x + (r.width / 2), r.tl().y + (r.height / 2));
+    static uint32_t s_id;
+
+    const Point & Center(Rect & r) {
+        return std::move(Point(r.tl().x + (r.width / 2), r.tl().y + (r.height / 2)));
+    }
+
+    double CosineAngle(const Point & v1, const Point & v2) {
+        /* A.B = |A||B|cos() */
+        /* cos() = A.B / |A||B| */
+        return v1.dot(v2) / (norm(v1) * norm(v2));
     }
 
     double CosineAngle(const Point & p1, const Point & p2, const Point & p3) {
@@ -155,27 +177,46 @@ protected:
     }
 
 public:
-    Target(Rect & roi, unsigned long frameTick) : m_arcLength(0), m_frameTick(frameTick), m_triggerCount(0), m_bugTriggerCount(0), m_maxVector(0), m_minVector(0) {
+    Target(Rect & roi, unsigned long frameTick) : m_arcLength(0), m_absLength(0), m_lastFrameTick(frameTick), m_triggerCount(0), m_bugTriggerCount(0), 
+            m_maxVector(0), m_minVector(0), m_averageArea(0), m_normVelocity(0), m_angleOfTurn(0) {
+        m_id = s_id++;
         m_rects.push_back(roi);
-        m_frameTick = frameTick;
+        m_lastFrameTick = frameTick;
+        m_frameTicks.push_back(frameTick);
     }
 
     void Reset() {
         Rect r = m_rects.back();
         m_rects.clear();
         m_rects.push_back(r);
+        m_frameTicks.clear();
+        m_frameTicks.push_back(m_lastFrameTick);
         m_triggerCount = 0;
-        //m_frameTick =
+        m_bugTriggerCount = 0;
+        m_maxVector = 0;
+        m_minVector = 0;
+        m_averageArea = 0;
+        m_normVelocity = 0;
+        m_angleOfTurn = 0;
         //m_arcLength = 0; /* TODO : Do clear this ? */
+        //m_absLength = 0;
+        //m_lastFrameTick =
     }
 
     void Update(Rect & roi, unsigned long frameTick) {
-        if(m_rects.size() > 0) {
-            Point p = roi.tl() - m_rects.back().tl();
-            double v = norm(p);
+        if(frameTick <= m_lastFrameTick) /* Reverse tick ??? Illegal !!! */
+            return;
+
+        int itick = frameTick - m_lastFrameTick;
+
+        if(m_rects.size() > 0) { /* We have 1 point now and will have 2 */
+            Point p = (roi.tl() - m_rects.back().tl()) / itick;
+            double v = norm(p) / itick;
 
             m_arcLength += v;
             m_vectors.push_back(p);
+
+            m_absLength = norm(roi.tl() - m_rects[0].tl());
 
             if(m_rects.size() == 1) {
                 m_maxVector = v;
@@ -184,38 +225,62 @@ public:
                 m_maxVector = v;
             else if(v < m_minVector)
                 m_minVector = v;
+
+            m_averageArea = (m_averageArea + roi.area()) / 2;
+        } else {
+            m_averageArea = roi.area();
         }
-#if 0
-        if(m_rects.size() == 1) {
-            m_velocity.x = (roi.tl().x - m_rects.back().tl().x);
-            m_velocity.y = (roi.tl().y - m_rects.back().tl().y);
-        } else if(m_rects.size() > 1) {
-            m_velocity.x = (m_velocity.x + (roi.tl().x - m_rects.back().tl().x)) / 2;
-            m_velocity.y = (m_velocity.y + (roi.tl().y - m_rects.back().tl().y)) / 2;
+
+        if(m_rects.size() == 1) { /* We have 2 point now */
+            m_velocity.x = (roi.tl().x - m_rects.back().tl().x) / itick;
+            m_velocity.y = (roi.tl().y - m_rects.back().tl().y) / itick;
+        } else if(m_rects.size() > 1) { /* We have at latest 3 point now */
+            m_velocity.x = (m_velocity.x + (roi.tl().x - m_rects.back().tl().x) / itick) / 2;
+            m_velocity.y = (m_velocity.y + (roi.tl().y - m_rects.back().tl().y) / itick) / 2;
+
+            size_t n = m_vectors.size() - 1;
+            size_t n_1 = n - 1;
+
+            m_acceleration.x = (m_acceleration.x + (m_vectors[n].x - m_vectors[n_1].x)) / 2;
+            m_acceleration.y = (m_acceleration.y + (m_vectors[n].y - m_vectors[n_1].y)) / 2;
+
+            double v = CosineAngle(m_vectors[n], m_vectors[n_1]);
+            double radian;
+            if(v <= -1.0f)
+                radian = M_PI;
+            else if(v >= 1.0f)
+                radian = 0;
+            else
+                radian = acos(v);
+
+            /* 
+            * r = (v1.x * v2.y) - (v2.x * v1.y) 
+            * If r > 0 v2 is located on the left side of v1. 
+            * if r == 0 v2 and v1 on the same line.
+            * If r < 0 v2 is located on the right side of v2.
+            */ 
+            v = (m_vectors[n].x * m_vectors[n_1].y) - (m_vectors[n_1].x * m_vectors[n].y);
+            if(v < 0)
+                radian *= -1.0;
+
+            m_angleOfTurn += (radian * 180 / M_PI);
         }
-#else
-        if(m_rects.size() >= 1) {
-            int histroy_count = 3;
-            if(m_rects.size() < histroy_count) {
-                m_velocity.x = (roi.tl().x - m_rects.back().tl().x);
-                m_velocity.y = (roi.tl().y - m_rects.back().tl().y);
-            } else {            
-                int c = 0;
-                for(vector< Point >::reverse_iterator rit=m_vectors.rbegin();rit!=m_vectors.rend();++rit) {
-                    m_velocity.x = (m_velocity.x + rit->x) / 2;
-                    m_velocity.y = (m_velocity.y + rit->y) / 2;
-                    if(++c >= histroy_count)
-                        break;
-                }
-            }
-        }
-#endif
+
+        m_normVelocity = norm(m_velocity);
+
         m_rects.push_back(roi);
-        m_frameTick = frameTick;
+        m_lastFrameTick = frameTick;
+        m_frameTicks.push_back(frameTick);
 #if 1
         if(m_triggerCount >= MAX_NUM_TRIGGER)
             Reset();
 #endif
+    }
+
+    void Update(Target & t) {
+        for(size_t i=0;i<t.m_rects.size();i++) {
+            Update(t.m_rects[i], t.m_frameTicks[i]);
+        }
     }
 
     int DotProduct(const Point & p) {
@@ -249,80 +314,164 @@ public:
     }
 
     void Draw(Mat & outFrame, bool drawAll = false) {
-        Rect r = LastRect();
+        Rect r = m_rects.back();
         rectangle( outFrame, r.tl(), r.br(), Scalar( 255, 0, 0 ), 1, 8, 0 );
 
         //RNG rng(12345);
         if(m_rects.size() > 1) { /* Minimum 2 points ... */
             for(int i=0;i<m_rects.size()-1;i++) {
-                Point p0 = m_rects[i].tl();
-                Point p1 = m_rects[i+1].tl();
+                //Point p0 = m_rects[i].tl();
+                //Point p1 = m_rects[i+1].tl();
+                Point p0 = Center(m_rects[i]);
+                Point p1 = Center(m_rects[i+1]);
                 line(outFrame, p0, p1, Scalar(0, 0, 255), 1);
                 //Scalar color = Scalar( rng.uniform(0, 255), rng.uniform(0,255), rng.uniform(0,255) );
                 //line(outFrame, p0, p1, color, 1);
                 //Point v = p1 - p0;
                 //printf("[%d,%d]\n", v.x, v.y);
                 if(drawAll)
-                    rectangle( outFrame, m_rects[i].tl(), m_rects[i].br(), Scalar( 196, 0, 0 ), 1, 8, 0 );
+                    //rectangle( outFrame, m_rects[i].tl(), m_rects[i].br(), Scalar( 196, 0, 0 ), 1, 8, 0 );
+                    rectangle( outFrame, m_rects[i].tl(), m_rects[i].br(), Scalar( (m_rects[0].x + m_rects[0].y) % 255, 0, 0 ), 1, 8, 0 );
             }
         }        
     }
 
     void Info() {
-        printf("### samples = %lu, area = %d, arc length = %f, abs length = %f, velocity = %f\n", 
-            m_rects.size(), AverageArea(), m_arcLength, AbsLength(), norm(m_velocity));
-        printf("### max vector = %f, min vector = %f\n", m_maxVector, m_minVector);      
+#ifdef DEBUG
+        printf("\033[0;31m"); /* Red */
+        printf("\n= = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =\n");
+        printf("[%u] Target :\n\tsamples = %lu, area = %d, arc length = %.1f, abs length = %.1f, velocity = %.1f, angle of turn = %.1f\n", 
+            m_id, m_rects.size(), m_averageArea, m_arcLength, m_absLength, m_normVelocity, m_angleOfTurn);
+        printf("\nVectors : length\n");      
         for(auto v : m_vectors) {
-            printf("%f\t", norm(v));
+            printf("%.1f\t", norm(v));
         }
         printf("\n");
-        printf("### history\n");
+        printf("maximum = %.1f, minimum = %.1f\n", m_maxVector, m_minVector);      
+        printf("\nTrajectory : [ Tick ] (x, y) area\n");
+        /*
         for(auto p : m_rects) {
             printf("(%4d,%4d)<%5d>\t", p.tl().x, p.tl().y, p.area());
         }
-        printf("\n");
+        */
+        for(size_t i=0;i<m_rects.size();i++) {
+            printf("[%lu](%4d,%4d) %d\t", m_frameTicks[i], m_rects[i].tl().x, m_rects[i].tl().y, m_rects[i].area());
+        }
+
+        printf("\nAngle of turn :\n"); 
+        if(m_vectors.size() > 1)
+        for(size_t i=0;i<m_vectors.size()-1;i++) {
+            double v = CosineAngle(m_vectors[i], m_vectors[i+1]);
+            double radian;
+            if(v <= -1.0f)
+                radian = M_PI;
+            else if(v >= 1.0f)
+                radian = 0;
+            else
+                radian = acos(v);
+
+            /* 
+            * r = (v1.x * v2.y) - (v2.x * v1.y) 
+            * If r > 0 v2 is located on the left side of v1. 
+            * if r == 0 v2 and v1 on the same line.
+            * If r < 0 v2 is located on the right side of v2.
+            */ 
+            v = (m_vectors[i+1].x * m_vectors[1].y) - (m_vectors[1].x * m_vectors[i+1].y);
+            if(v < 0)
+                radian *= -1.0;
+
+            printf("<%f ", (radian * 180 / M_PI));
+        }
+        printf("\n= = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =\n");
+        printf("\033[0m"); /* Default color */
+#endif
     }
 
-    inline size_t VectorCount() { return m_vectors.size(); }
     inline double VectorDistortion() {
         return m_minVector > 0 ? (m_maxVector / m_minVector) : 0;
     }
 
     inline double ArcLength() { return m_arcLength; }
-    inline double AbsLength() {         
-        if(m_rects.size() > 1)
-            return norm(m_rects.back().tl() - m_rects[0].tl());
-        else
-            return 0;
-    }    
-    inline unsigned long FrameTick() { return m_frameTick; }
-    inline Rect & LastRect() { return m_rects.back(); }
-#if 0    
-    inline Point BeginPoint() { return m_rects[0].tl(); }
-    inline Point EndPoint() { return m_rects.back().tl(); }
-#else
-    inline Point BeginPoint() { return Center(m_rects[0]); }
-    inline Point EndPoint() { return Center(m_rects.back()); }
-#endif    
-    inline void Trigger() { m_triggerCount++; }
+    inline double AbsLength() { return m_absLength; }
+
+    inline unsigned long FrameTick() { return m_lastFrameTick; }
+    inline const Rect & LastRect() { return m_rects.back(); }
+
+    inline const Point & BeginCenterPoint() { return Center(m_rects[0]); }
+    inline const Point & EndCenterPoint() { return Center(m_rects.back()); }
+
+    inline const Point & CurrentCenterPoint() { return Center(m_rects.back()); }
+    const Point & PreviousCenterPoint() {
+        if(m_rects.size() < 2)
+            return std::move(Point(0, 0));
+
+        auto it = m_rects.rbegin();
+        return Center(*(++it)); 
+    }
+    
+    bool Trigger(bool enableBugTrigger = false) {
+        bool r = false;
+        if(m_vectors.size() <= 8 &&
+            VectorDistortion() >= 40) { /* 最大位移向量值與最小位移向量值的比例 */
+#ifdef DEBUG
+            printf("\033[0;31m"); /* Red */
+            printf("Velocity distortion %f !!!\n", VectorDistortion());
+            printf("\033[0m"); /* Default color */
+#endif
+        } else if(enableBugTrigger) { 
+            if((m_averageArea < 144 && m_normVelocity > 25) || /* 12 x 12 */
+                    (m_averageArea < 256 && m_normVelocity > 40) || /* 16 x 16 */
+                    (m_averageArea < 324 && m_normVelocity > 50) || /* 18 x 18 */
+                    (m_averageArea < 400 && m_normVelocity > 75) || /* 20 x 20 */
+                    (m_averageArea < 576 && m_normVelocity > 100) || /* 24 x 24 */
+                    (m_averageArea < 900 && m_normVelocity > 125) /* 30 x 30 */
+                ) {
+#ifdef DEBUG
+                printf("\033[0;31m"); /* Red */
+                printf("Bug detected !!! average area = %d, velocity = %f\n", m_averageArea, m_normVelocity);
+                printf("\033[0m"); /* Default color */
+#endif
+                m_bugTriggerCount++;
+            } else {
+                if(m_bugTriggerCount > 0) {
+#ifdef DEBUG
+                    printf("\033[0;31m"); /* Red */
+                    printf("False trigger due to bug trigger count is %u\n", m_bugTriggerCount);
+                    printf("\033[0m"); /* Default color */
+#endif
+                    if(m_bugTriggerCount <= 1) /* To avoid false bug detection */
+                        m_bugTriggerCount--;
+                } else {
+                    m_triggerCount++;
+                    r = true;
+                }
+            }
+        } else {
+            m_triggerCount++;
+            r = true;
+        }
+        if(r) {
+#ifdef DEBUG
+            printf("\033[0;31m"); /* Red */
+            printf("[%u] T R I G G E R (%d)\n", m_id, m_triggerCount);
+            printf("\033[0m"); /* Default color */
+#endif
+        }
+
+        Info();
+
+        return r;
+    }
+
     inline uint8_t TriggerCount() { return m_triggerCount; }
 
-    inline void BugTrigger() { m_bugTriggerCount++; }
-    inline uint16_t BugTriggerCount() { return m_bugTriggerCount; }
-
-    inline Point & Velocity() { return m_velocity; }
-    inline double NormVelocity() { return norm(m_velocity); }
-    int AverageArea() {
-        uint32_t a = 0;
-        for(auto r : m_rects) {
-            a += r.area();
-        }
-        return a / m_rects.size();
-    }
-    inline size_t RectCount() { return m_rects.size(); }
+    inline int AverageArea() { return m_averageArea; }
+    inline size_t TrackedCount() { return m_rects.size(); }
 
     friend class Tracker;
 };
+
+uint32_t Target::s_id = 0;
 
 static inline bool TargetSortByArea(Target & a, Target & b)
 {
@@ -341,13 +490,14 @@ static Rect MergeRect(Rect & r1, Rect & r2) {
 class Tracker
 {
 private:
-    unsigned long m_frameTick;
+    int m_width, m_height;
+    unsigned long m_lastFrameTick;
     list< Target > m_targets;
     Rect m_newTargetRestrictionRect;
     list< list< Rect > > m_newTargetsHistory;
 
 public:
-    Tracker() : m_frameTick(0) {}
+    Tracker(int width, int height) : m_width(width), m_height(height), m_lastFrameTick(0) {}
 
     void NewTargetRestriction(const Rect & r) {
         m_newTargetRestrictionRect = r;
@@ -355,38 +505,38 @@ public:
 
     Rect NewTargetRestriction() const {   return m_newTargetRestrictionRect; }
 
-    void Update(list< Rect > & roiRect) {
-        ++m_frameTick;
+    void Update(list< Rect > & roiRect, bool enableFakeTargetDetection = false) {
+        ++m_lastFrameTick;
         for(list< Target >::iterator t=m_targets.begin();t!=m_targets.end();) { /* Try to find lost targets */
             list<Rect>::iterator rr;
             Rect r1 = t->m_rects.back();
             Rect r2 = r1;
-            unsigned long f = m_frameTick - t->FrameTick();
-            r2.x += t->m_velocity.x * f;
-            r2.y += t->m_velocity.y * f;
+            int f = m_lastFrameTick - t->FrameTick();
+
+            r2.x += (t->m_velocity.x + t->m_acceleration.x) * f;
+            r2.y += (t->m_velocity.y + t->m_acceleration.y) * f;
 
             double n0 = 0;
-            if(t->m_vectors.size() > 0)
-                n0 = cv::norm(t->m_velocity);
+            if(t->m_vectors.size() > 0) {
+                Point v = t->m_velocity + t->m_acceleration;
+                n0 = cv::norm(v);
+            }
             
             for(rr=roiRect.begin();rr!=roiRect.end();++rr) {
 
-                if(r1.area() > (rr->area() * 100) ||
-                    rr->area() > (r1.area() * 100))
+                if(r1.area() > (rr->area() * 32) ||
+                    rr->area() > (r1.area() * 32)) /* Object and target area difference */
                     continue;
 
-                double n1 = cv::norm(rr->tl() - r1.tl());
-/*
-                if(rr->area() < 800 && n1 > 300)
-                    continue;
-*/
+                double n1 = cv::norm(rr->tl() - r1.tl()); /* Distance between object and target */
 #if 1
-                if(n1 > (CAMERA_HEIGHT / 2))
+                if(n1 > 320)
                     continue; /* Too far */
 
                 if(t->m_vectors.size() > 1) {
                     double n = cv::norm(t->m_vectors.back());
-                    if((n1 > (n * 10) || n > (n1 * 10)))
+                    //if((n1 > (n * 10) || n > (n1 * 10)))
+                    if(n1 > (n * f * 2))
                         continue; /* Too far */
                 }
 #endif
@@ -403,41 +553,50 @@ public:
                 }
 
                 if(t->m_vectors.size() == 0) { /* new target with zero velocity */
-                    if(n1 < (rr->width + rr->height) * 4) { /* Target tracked with Euclidean distance ... */                    
-                        break;
+#ifdef VIDEO_INPUT_FILE
+                    if(rr->y >= (m_height * 4 / 5)) {
+#else
+                    if(rr->x >= (m_width * 4 / 5)) {
+#endif
+                        if(n1 < (rr->width + rr->height) * 2) /* Target tracked with Euclidean distance ... */                    
+                            break;                    
+                    } else {
+                        if(n1 < (rr->width + rr->height) * 3) /* Target tracked with Euclidean distance ... */                    
+                            break;
                     }
                 } else if(n1 < (n0 * f)) { /* Target tracked with velocity and Euclidean distance ... */
 #ifdef VIDEO_INPUT_FILE
-                    if(rr->y >= (CAMERA_WIDTH * 4 / 5)) {
+                    if(rr->y >= (m_height * 4 / 5)) {
 #else
-                    if(rr->x >= (CAMERA_WIDTH * 4 / 5)) {
+                    if(rr->x >= (m_width * 4 / 5)) {
 #endif
                         double a = t->CosineAngle(rr->tl());
                         if(a > 0.9659) /* cos(PI/12) */
                             break;
                     } else {
-                        double a = t->CosineAngle(rr->tl());
-                        if(a > 0.8587) /* cos(PI/6) */
-                            break;
+                        //double a = t->CosineAngle(rr->tl());
+                        //if(a > 0.8587) /* cos(PI/6) */
+                        //    break;
                     }
                 }
             }
-#if 1
+
             if(rr == roiRect.end() && 
                 t->m_vectors.size() > 0) { /* Target missing ... */
                 for(rr=roiRect.begin();rr!=roiRect.end();++rr) { /* */
 
-                    if(r1.area() > (rr->area() * 100) ||
-                        rr->area() > (r1.area() * 100))
+                    if(r1.area() > (rr->area() * 32) ||
+                        rr->area() > (r1.area() * 32)) /* Object and target area difference */
                         continue;
 
-                    double n1 = cv::norm(rr->tl() - r1.tl());
+                    double n1 = cv::norm(rr->tl() - r1.tl()); /* Distance between object and target */
 #if 1
-                    if(n1 > (CAMERA_HEIGHT / 2))
+                    if(n1 > 320)
                         continue; /* Too far */
 
                     double n = cv::norm(t->m_vectors.back());
-                    if((n1 > (n * 10) || n > (n1 * 10)))
+                    //if((n1 > (n * 10) || n > (n1 * 10)))
+                    if(n1 > (n * f * 2))
                         continue; /* Too far */
 #endif
                     double a = t->CosineAngle(rr->tl());
@@ -454,36 +613,57 @@ public:
                     }
 #endif
                     /* This number has been tested by various video. Don't touch it !!! */
-                    /* Tracking longer distance if target samples is over 20 */
-                    if(a > 0.9659 && 
-                        n2 < (n0 * (2 + (t->RectCount() > 20 ? 1 : 0)))) { /* cos(PI/12) */
+                    if(a > 0.5 && 
+                        n2 < (n0 * f)) { /* cos(PI/3) */
                         break;
                     }
                 }
             }
-#else
+
             if(rr == roiRect.end()) { /* Target missing ... */
-                for(rr=roiRect.begin();rr!=roiRect.end();++rr) { /* */
-                    if(cv::norm(r2.tl()-rr->tl()) < ((rr->width + rr->height) * 2)) { /* Target tracked with velocity and Euclidean distance ... */
-                        if(t->DotProduct(rr->tl()) >= 0) /* Two vector less than 90 degree */
-                            break;
-                    }
-                }
-            }
-#endif
-            if(rr == roiRect.end()) { /* Target missing ... */
-                uint32_t compensation = (t->RectCount() / 10); /* Tracking more frames with more sample */
+                uint32_t compensation = (t->TrackedCount() / 10); /* Tracking more frames with more sample */
                 if(compensation > 4)
                     compensation = 4;
-                if(m_frameTick - t->FrameTick() > MAX_NUM_FRAME_MISSING_TARGET + compensation) { /* Target still missing for over X frames */
+                if((m_lastFrameTick - t->FrameTick() > MAX_NUM_FRAME_MISSING_TARGET + compensation) || /* Target still missing for over X frames */
+                        t->m_vectors.size() == 0) { /* new target with zero velocity */
+#ifdef DEBUG
                     Point p = t->m_rects.back().tl();
-                    printf("lost target : %d, %d\n", p.x, p.y);
-                    //printf("lost target : %d, %d\n", t->m_velocity.x, t->m_velocity.y);
+                    printf("\033[0;35m"); /* Puple */
+                    printf("<%u> Lost target : (%d, %d), samples : %lu\n", t->m_id, p.x, p.y, t->m_rects.size());
+                    printf("\033[0m"); /* Default color */
+#endif
                     t = m_targets.erase(t); /* Remove tracing target */
                     continue;
+                } else {
+#ifdef DEBUG
+                    Point p = t->m_rects.back().tl();
+                    printf("<%u> Search target : (%d, %d) -> [%d, %d]\n", t->m_id, p.x, p.y, 
+                        (t->m_velocity.x + t->m_acceleration.x) * f, (t->m_velocity.y + t->m_acceleration.y) * f);
+#endif
+                    for(list< Target >::iterator tt=m_targets.begin();tt!=m_targets.end();++tt) {
+                        if(tt->m_id == t->m_id)
+                            continue;
+                        if((t->m_rects.back() & tt->m_rects.front()).area() > 0) { /**/
+                            t->Update(*tt);
+#ifdef DEBUG
+                            printf("\033[0;33m"); /* Yellow */
+                            printf("Merge targets : <%d> -->> <%d>\n", tt->m_id, t->m_id);
+                            printf("\033[0m"); /* Default color */
+#endif
+                            m_targets.erase(tt);
+                            break;
+                        }
+                    }
                 }
             } else { /* Target tracked ... */
-                t->Update(*rr, m_frameTick);
+#ifdef DEBUG
+                Point p = t->m_rects.back().tl();
+                printf("\033[0;32m"); /* Green */
+                printf("<%u> Target tracked : [%lu](%d, %d) -> (%d, %d)[%d, %d]\n", t->m_id, m_lastFrameTick, p.x, p.y, 
+                    rr->x, rr->y, rr->x - t->m_rects.back().x, rr->y - t->m_rects.back().y);
+                printf("\033[0m"); /* Default color */
+#endif
+                t->Update(*rr, m_lastFrameTick);
                 roiRect.erase(rr);
             }
             ++t;
@@ -491,7 +671,7 @@ public:
 
         list< Rect > newTargetList;
 
-        for(list<Rect>::iterator rr=roiRect.begin();rr!=roiRect.end();++rr) {
+        for(list<Rect>::iterator rr=roiRect.begin();rr!=roiRect.end();++rr) { /* New targets registration */
             if((m_newTargetRestrictionRect & *rr).area() > 0) {
                 continue;
             }
@@ -500,9 +680,9 @@ public:
             for(auto & l : m_newTargetsHistory) {
                 for(auto & r : l) {
 #ifdef VIDEO_INPUT_FILE
-                    if(rr->y < (CAMERA_WIDTH * 4 / 5))
+                    if(rr->y < (m_height * 4 / 5))
 #else
-                    if(rr->x < (CAMERA_WIDTH * 4 / 5))
+                    if(rr->x < (m_width * 4 / 5))
 #endif
                         continue;
                     if((r & *rr).area() > 0) { /* new target overlap previous new target */
@@ -511,24 +691,32 @@ public:
                 }
             }
 #ifdef VIDEO_INPUT_FILE
-            if(rr->y >= (CAMERA_WIDTH * 4 / 5)) {
+            if(rr->y >= (m_height * 4 / 5)) {
 #else
-            if(rr->x >= (CAMERA_WIDTH * 4 / 5)) {
+            if(rr->x >= (m_width * 4 / 5)) {
 #endif
                 if(overlap_count > 0) {
-                    rr->x = rr->x - rr->width;
-                    rr->y = rr->y - rr->height;
+                    rr->x -= rr->width;
+                    rr->y -= rr->height;
                     rr->width = rr->width << 1;
                     rr->height = rr->height << 1;
                 }
                 newTargetList.push_back(*rr);
             }
 
-            if(overlap_count < 2) {
-                m_targets.push_back(Target(*rr, m_frameTick));
-                printf("new target : %d, %d\n", rr->tl().x, rr->tl().y);
-            } else
-                printf("fake target (%u)\n", overlap_count);
+            if(enableFakeTargetDetection && 
+                overlap_count >= 2) {
+#ifdef DEBUG
+                printf("<X> Fake target : (%u)\n", overlap_count);
+#endif
+            } else {
+                m_targets.push_back(Target(*rr, m_lastFrameTick));
+#ifdef DEBUG
+                printf("\033[0;32m"); /* Green */
+                printf("<%u> New target : [%lu](%d, %d)\n", m_targets.back().m_id, m_lastFrameTick, rr->tl().x, rr->tl().y);
+                printf("\033[0m"); /* Default color */
+#endif
+            }
         }
 
         m_newTargetsHistory.push_back(newTargetList);
@@ -643,16 +831,29 @@ void contour_moving_object(Mat & frame, Mat & foregroundMask, list<Rect> & roiRe
     vector< Vec4i > hierarchy;
 //  findContours(foregroundMask, contours, hierarchy, RETR_TREE, CHAIN_APPROX_NONE);
     findContours(foregroundMask, contours, hierarchy, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
+#if 0    
     sort(contours.begin(), contours.end(), [](vector<cv::Point> contour1, vector<cv::Point> contour2) {  
             //return (contour1.size() > contour2.size()); /* Outline length */
             return (cv::contourArea(contour1) > cv::contourArea(contour2)); /* Area */
         }); /* Contours sort by area, controus[0] is largest */
-
+#endif
     vector<Rect> boundRect( contours.size() );
+
     for(int i=0; i<contours.size(); i++) {
         //approxPolyDP( Mat(contours[i]), contours[i], 3, true );
         boundRect[i] = boundingRect( Mat(contours[i]) );
+    }
+
+    sort(boundRect.begin(), boundRect.end(), [](const Rect & r1, const Rect & r2) {  
+            //return (contour1.size() > contour2.size()); /* Outline length */
+            return (r1.area() > r2.area()); /* Area */
+        }); /* Rects sort by area, boundRect[0] is largest */
+
+    for(int i=0; i<boundRect.size(); i++) {
+        //approxPolyDP( Mat(contours[i]), contours[i], 3, true );
+        //boundRect[i] = boundingRect( Mat(contours[i]) );
         //drawContours(contoursImg, contours, i, color, 2, 8, hierarchy);
+
         if(boundRect[i].width > MAX_TARGET_WIDTH &&
             boundRect[i].height > MAX_TARGET_HEIGHT)
             continue; /* Extremely large object */
@@ -676,7 +877,7 @@ void contour_moving_object(Mat & frame, Mat & foregroundMask, list<Rect> & roiRe
 #if 1
         if(roiFrame.cols > roiFrame.rows && (roiFrame.cols >> 4) > roiFrame.rows)
             continue; /* Ignore thin object */
-#endif                        
+#endif
         boundRect[i].y += y_offset;
         roiRect.push_back(boundRect[i]);
         if(++num_target >= MAX_NUM_TARGET)
@@ -739,13 +940,17 @@ int main(int argc, char**argv)
     if(argc > 1)
         cap.open(argv[1], cv::CAP_FFMPEG);
     else {
-        cout << "Usage : dragon-eye-cuda <vidoe file>" << endl;
+        cout << "Usage : dragon-eye-simulator <vidoe file>" << endl;
         return 0;
     }
 #else
     int index = 0;    
     if(argc > 1)
         index = atoi(argv[1]);
+    else {
+        cout << "Usage : dragon-eye-simulator <vidoe device>" << endl;
+        return 0;
+    }
     VideoCapture cap(index);
 
     cout << "Video input (" << static_cast<int32_t>(cap.get(CAP_PROP_FRAME_WIDTH)) << "x" << static_cast<int32_t>(cap.get(CAP_PROP_FRAME_HEIGHT))
@@ -761,7 +966,7 @@ int main(int argc, char**argv)
     cap.set(CAP_PROP_FOURCC ,VideoWriter::fourcc('M', 'J', 'P', 'G') );
     cap.set(CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH);
     cap.set(CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT);
-    cap.set(CAP_PROP_FPS, 30.0);
+    cap.set(CAP_PROP_FPS, CAMERA_FPS);
 
     cout << "Video input (" << static_cast<int32_t>(cap.get(CAP_PROP_FRAME_WIDTH)) << "x" << static_cast<int32_t>(cap.get(CAP_PROP_FRAME_HEIGHT))
         << ") at " << cap.get(CAP_PROP_FPS) << " FPS." << endl;
@@ -783,7 +988,7 @@ int main(int argc, char**argv)
     cx = (capFrame.cols / 2) - 1;
     cy = capFrame.rows-1;
 
-    Tracker tracker;
+    Tracker tracker(capFrame.cols, capFrame.rows);
 
 #ifdef NEW_TARGET_RESTRICTION    
 #ifdef VIDEO_INPUT_FILE
@@ -832,6 +1037,9 @@ int main(int argc, char**argv)
     uint64_t loopCount = 0;
 
     while(cap.read(capFrame)) {
+
+        //cout << "timestamp : " << cap.get(CAP_PROP_POS_MSEC) << endl;
+
         ++loopCount;
 #if 0
         /* (contrast) alpha = 2.2, (brightness) beta = 50 */   
@@ -871,7 +1079,7 @@ int main(int argc, char**argv)
 #endif
         line(outFrame, Point(0, (CAMERA_WIDTH * 4 / 5)), Point(CAMERA_HEIGHT, (CAMERA_WIDTH * 4 / 5)), Scalar(127, 127, 0), 1);
 
-        tracker.Update(roiRect);
+        tracker.Update(roiRect, FAKE_TARGET_DETECTION);
 
         list< Target > & targets = tracker.TargetList();
 
@@ -886,53 +1094,27 @@ int main(int argc, char**argv)
         bool doTrigger = false;
         for(list< Target >::iterator t=targets.begin();t!=targets.end();++t) {
 #if defined(VIDEO_OUTPUT_SCREEN) || defined(VIDEO_OUTPUT_FILE)
-            t->Draw(outFrame);
+            t->Draw(outFrame, true);
 #endif
             if(t->TriggerCount() > 0 && t->TriggerCount() < MAX_NUM_TRIGGER) {
                 doTrigger = true;
             } else if(t->ArcLength() > MIN_COURSE_LENGTH && 
-                t->RectCount() > MIN_TARGET_TRACKED_COUNT) {
+                t->AbsLength() > MIN_COURSE_LENGTH && 
+                t->TrackedCount() > MIN_TARGET_TRACKED_COUNT) {
 #ifdef VIDEO_INPUT_FILE
-                if((t->BeginPoint().x > cx && t->EndPoint().x <= cx) ||
-                    (t->BeginPoint().x < cx && t->EndPoint().x >= cx)) {
+                //if((t->BeginCenterPoint().x > cx && t->EndCenterPoint().x <= cx) ||
+                //    (t->BeginCenterPoint().x < cx && t->EndCenterPoint().x >= cx)) {
+
+                if((t->BeginCenterPoint().x > cx && t->EndCenterPoint().x <= cx) ||
+                    (t->BeginCenterPoint().x < cx && t->EndCenterPoint().x >= cx) ||
+                    (t->PreviousCenterPoint().x > cx && t->CurrentCenterPoint().x <= cx) ||
+                    (t->PreviousCenterPoint().x < cx && t->CurrentCenterPoint().x >= cx)) {
 #else
-                if((t->BeginPoint().y > cy && t->EndPoint().y <= cy) ||
-                    (t->BeginPoint().y < cy && t->EndPoint().y >= cy)) {
+                if((t->BeginCenterPoint().y > cy && t->EndCenterPoint().y <= cy) ||
+                    (t->BeginCenterPoint().y < cy && t->EndCenterPoint().y >= cy)) {
 #endif //VIDEO_INPUT_FILE
-                    if(t->VectorCount() <= 8 &&
-                        t->VectorDistortion() >= 40) { /* 最大位移向量值與最小位移向量值的比例 */
-                        printf("Velocity distortion %f !!!\n", t->VectorDistortion());
-                        t->Info();
-                    } else if(t->AverageArea() < 144 && /* 12 x 12 */
-                        t->NormVelocity() > 25) {
-                        printf("Bug detected !!! average area = %d, velocity = %f\n", t->AverageArea(), t->NormVelocity());
-                        t->BugTrigger();
-                        t->Info();
-                    } else if(t->AverageArea() < 256 && /* 16 x 16 */
-                        t->NormVelocity() > 40) {
-                        printf("Bug detected !!! average area = %d, velocity = %f\n", t->AverageArea(), t->NormVelocity());
-                        t->BugTrigger();
-                        t->Info();
-                    } else if(t->AverageArea() < 400 && /* 20 x 20 */
-                        t->NormVelocity() > 75) {
-                        printf("Bug detected !!! average area = %d, velocity = %f\n", t->AverageArea(), t->NormVelocity());
-                        t->BugTrigger();
-                        t->Info();
-                    } else if(t->AverageArea() < 576 && /* 24 x 24 */
-                        t->NormVelocity() > 100) {
-                        printf("Bug detected !!! average area = %d, velocity = %f\n", t->AverageArea(), t->NormVelocity());
-                        t->BugTrigger();
-                        t->Info();
-                    } else if(t->AverageArea() < 900 && /* 30 x 30 */
-                        t->NormVelocity() > 125) {
-                        printf("Bug detected !!! average area = %d, velocity = %f\n", t->AverageArea(), t->NormVelocity());
-                        t->BugTrigger();
-                        t->Info();
-                    } else if(t->TriggerCount() < MAX_NUM_TRIGGER) { /* Triggle 4 times maximum  */
-                        if(t->BugTriggerCount() > 0)
-                            printf("False trigger due to bug trigger count is %u\n", t->BugTriggerCount());
-                        else
-                            doTrigger = true;                            
+                    if(t->TriggerCount() < MAX_NUM_TRIGGER) { /* Triggle 4 times maximum  */
+                        doTrigger = t->Trigger(BUG_TRIGGER);
                     }
                 }
             }
@@ -945,10 +1127,6 @@ int main(int argc, char**argv)
                 line(outFrame, Point(0, cy), Point(cx, cy), Scalar(0, 0, 255), 3);
 #endif //VIDEO_INPUT_FILE
 #endif //VIDEO_OUTPUT_FRAME
-                printf("T R I G G E R - %d\n", t->TriggerCount());
-                t->Trigger();
-                t->Info();
-
                 break; /* Has been trigger, ignore other targets */           
             }
         }        
@@ -975,7 +1153,11 @@ int main(int argc, char**argv)
         int k = waitKey(1);
         if(k == 27) { /* Press key 'ESC' to quit */
             break;
+#ifdef VIDEO_OUTPUT_FILE            
+        } else if(k == 'p') { /* Press key 'p' to pause or resume */
+#else
         } else if(k == 'p' || doTrigger) { /* Press key 'p' to pause or resume */
+#endif
             while(waitKey(1) != 'p') {
                 if(bShutdown)
                     break;
