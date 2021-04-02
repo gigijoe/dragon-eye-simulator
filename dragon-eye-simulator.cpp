@@ -1076,9 +1076,9 @@ int main(int argc, char**argv)
         writeText( outFrame, "New Target Restriction Area", Point(cx - 200, cy - 200));
 #endif
         writeText( outFrame, currentDateTime(), Point(240, 40));
-#endif
-        line(outFrame, Point(0, (CAMERA_WIDTH * 4 / 5)), Point(CAMERA_HEIGHT, (CAMERA_WIDTH * 4 / 5)), Scalar(127, 127, 0), 1);
 
+        line(outFrame, Point(0, (CAMERA_WIDTH * 4 / 5)), Point(CAMERA_HEIGHT, (CAMERA_WIDTH * 4 / 5)), Scalar(127, 127, 0), 1);
+#endif
         tracker.Update(roiRect, FAKE_TARGET_DETECTION);
 
         list< Target > & targets = tracker.TargetList();
@@ -1156,7 +1156,8 @@ int main(int argc, char**argv)
 #ifdef VIDEO_OUTPUT_FILE            
         } else if(k == 'p') { /* Press key 'p' to pause or resume */
 #else
-        } else if(k == 'p' || doTrigger) { /* Press key 'p' to pause or resume */
+//        } else if(k == 'p' || doTrigger) { /* Press key 'p' to pause or resume */
+        } else if(k == 'p') { /* Press key 'p' to pause or resume */
 #endif
             while(waitKey(1) != 'p') {
                 if(bShutdown)
@@ -1166,6 +1167,9 @@ int main(int argc, char**argv)
 #endif
         if(bShutdown)
             break;
+
+        if(doTrigger)
+            sleep(1);
 
         steady_clock::time_point t2(steady_clock::now());
         auto it = t2 - t1;
