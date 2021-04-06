@@ -128,9 +128,53 @@ double getPSNR_CUDA(const Mat& I1, const Mat& I2)
     }
 }
 
+double getPSNR(const Mat& I1, const Mat& I2)
+{
+    Mat s1;
+    absdiff(I1, I2, s1);       // |I1 - I2|
+    s1.convertTo(s1, CV_32F);  // 不能在8位矩陣上做平方運算
+    s1 = s1.mul(s1);           // |I1 - I2|^2
+
+    Scalar s = sum(s1);         // 疊加每個通道的元素
+
+    double sse = s.val[0] + s.val[1] + s.val[2]; // 疊加所有通道
+
+    if( sse <= 1e-10) // 如果值太小就直接等於0
+        return 0;
+    else
+    {
+        double  mse =sse /(double)(I1.channels() * I1.total());
+        double psnr = 10.0*log10((255*255)/mse);
+        return psnr;
+    }
+}
+
 /*
 *
 */
+
+const Mat SubMat(const Mat & capFrame, const Point & center, const Size & size)
+{
+        Rect r(center.x - (size.width / 2), center.y - (size.height / 2), size.width, size.height);
+
+        if(r.x < 0)
+            r.x = 0;
+        else if(r.x + size.width >= capFrame.cols)
+            r.x = capFrame.cols - (size.width + 1);
+
+        if(r.y < 0)
+            r.y = 0;
+        else if(r.y + size.height >= capFrame.rows)
+            r.y = capFrame.rows - (size.height + 1);
+
+        //printf("r (%d, %d) [%d, %d]\n", r.x, r.y, r.width, r.height);
+
+        return capFrame(r);
+}
+
+const Point & Center(Rect & r) {
+    return std::move(Point(r.tl().x + (r.width / 2), r.tl().y + (r.height / 2)));
+}
 
 class Target
 {
@@ -152,11 +196,9 @@ protected:
     double m_normVelocity;
     double m_angleOfTurn;
 
-    static uint32_t s_id;
+    Mat roiFrame;
 
-    const Point & Center(Rect & r) {
-        return std::move(Point(r.tl().x + (r.width / 2), r.tl().y + (r.height / 2)));
-    }
+    static uint32_t s_id;
 
     double CosineAngle(const Point & v1, const Point & v2) {
         /* A.B = |A||B|cos() */
@@ -177,9 +219,12 @@ protected:
     }
 
 public:
-    Target(Rect & roi, unsigned long frameTick) : m_arcLength(0), m_absLength(0), m_lastFrameTick(frameTick), m_triggerCount(0), m_bugTriggerCount(0), 
+    Target(Rect & roi, Mat & capFrame, unsigned long frameTick) : m_arcLength(0), m_absLength(0), m_lastFrameTick(frameTick), m_triggerCount(0), m_bugTriggerCount(0), 
             m_maxVector(0), m_minVector(0), m_averageArea(0), m_normVelocity(0), m_angleOfTurn(0) {
         m_id = s_id++;
+
+        roiFrame = SubMat(capFrame, Center(roi), Size(16, 16));
+
         m_rects.push_back(roi);
         m_lastFrameTick = frameTick;
         m_frameTicks.push_back(frameTick);
@@ -203,9 +248,11 @@ public:
         //m_lastFrameTick =
     }
 
-    void Update(Rect & roi, unsigned long frameTick) {
+    void Update(Rect & roi, Mat & capFrame, unsigned long frameTick) {
         if(frameTick <= m_lastFrameTick) /* Reverse tick ??? Illegal !!! */
             return;
+
+        roiFrame = SubMat(capFrame, Center(roi), Size(16, 16));
 
         int itick = frameTick - m_lastFrameTick;
 
@@ -277,9 +324,9 @@ public:
 #endif
     }
 
-    void Update(Target & t) {
+    void Update(Target & t, Mat & capFrame) {
         for(size_t i=0;i<t.m_rects.size();i++) {
-            Update(t.m_rects[i], t.m_frameTicks[i]);
+            Update(t.m_rects[i], capFrame, t.m_frameTicks[i]);
         }
     }
 
@@ -505,7 +552,7 @@ public:
 
     Rect NewTargetRestriction() const {   return m_newTargetRestrictionRect; }
 
-    void Update(list< Rect > & roiRect, bool enableFakeTargetDetection = false) {
+    void Update(list< Rect > & roiRect, Mat & capFrame, bool enableFakeTargetDetection = false) {
         ++m_lastFrameTick;
         for(list< Target >::iterator t=m_targets.begin();t!=m_targets.end();) { /* Try to find lost targets */
             list<Rect>::iterator rr;
@@ -644,7 +691,7 @@ public:
                         if(tt->m_id == t->m_id)
                             continue;
                         if((t->m_rects.back() & tt->m_rects.front()).area() > 0) { /**/
-                            t->Update(*tt);
+                            t->Update(*tt, capFrame);
 #ifdef DEBUG
                             printf("\033[0;33m"); /* Yellow */
                             printf("Merge targets : <%d> -->> <%d>\n", tt->m_id, t->m_id);
@@ -662,8 +709,17 @@ public:
                 printf("<%u> Target tracked : [%lu](%d, %d) -> (%d, %d)[%d, %d]\n", t->m_id, m_lastFrameTick, p.x, p.y, 
                     rr->x, rr->y, rr->x - t->m_rects.back().x, rr->y - t->m_rects.back().y);
                 printf("\033[0m"); /* Default color */
+
+                /* Target tracked, check PSNR */
+
+                //double psnr = getPSNR(t->roiFrame, SubMat(capFrame, Center(*rr), Size(16, 16)));
+                double psnr = getPSNR_CUDA(t->roiFrame, SubMat(capFrame, Center(*rr), Size(16, 16)));
+
+                printf("\033[0;33m"); /* Yellow */
+                printf("<%u> psnr = %f\n", t->m_id, psnr);
+                printf("\033[0m"); /* Default color */
 #endif
-                t->Update(*rr, m_lastFrameTick);
+                t->Update(*rr, capFrame, m_lastFrameTick);
                 roiRect.erase(rr);
             }
             ++t;
@@ -710,7 +766,7 @@ public:
                 printf("<X> Fake target : (%u)\n", overlap_count);
 #endif
             } else {
-                m_targets.push_back(Target(*rr, m_lastFrameTick));
+                m_targets.push_back(Target(*rr, capFrame, m_lastFrameTick));
 #ifdef DEBUG
                 printf("\033[0;32m"); /* Green */
                 printf("<%u> New target : [%lu](%d, %d)\n", m_targets.back().m_id, m_lastFrameTick, rr->tl().x, rr->tl().y);
@@ -1079,7 +1135,7 @@ int main(int argc, char**argv)
 
         line(outFrame, Point(0, (CAMERA_WIDTH * 4 / 5)), Point(CAMERA_HEIGHT, (CAMERA_WIDTH * 4 / 5)), Scalar(127, 127, 0), 1);
 #endif
-        tracker.Update(roiRect, FAKE_TARGET_DETECTION);
+        tracker.Update(roiRect, grayFrame, FAKE_TARGET_DETECTION);
 
         list< Target > & targets = tracker.TargetList();
 
@@ -1156,8 +1212,7 @@ int main(int argc, char**argv)
 #ifdef VIDEO_OUTPUT_FILE            
         } else if(k == 'p') { /* Press key 'p' to pause or resume */
 #else
-//        } else if(k == 'p' || doTrigger) { /* Press key 'p' to pause or resume */
-        } else if(k == 'p') { /* Press key 'p' to pause or resume */
+        } else if(k == 'p' || doTrigger) { /* Press key 'p' to pause or resume */
 #endif
             while(waitKey(1) != 'p') {
                 if(bShutdown)
@@ -1167,9 +1222,6 @@ int main(int argc, char**argv)
 #endif
         if(bShutdown)
             break;
-
-        if(doTrigger)
-            sleep(1);
 
         steady_clock::time_point t2(steady_clock::now());
         auto it = t2 - t1;
