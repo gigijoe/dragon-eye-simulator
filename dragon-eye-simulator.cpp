@@ -107,6 +107,33 @@ inline void writeText( Mat & mat, const string text, const Point textOrg)
 * The PSNR returns a float number, that if the two inputs are similar between 30 and 50 (higher is better).
 */
 
+struct BufferPSNR                                     // Optimized CUDA versions
+{   // Data allocations are very expensive on CUDA. Use a buffer to solve: allocate once reuse later.
+    cuda::GpuMat gI1, gI2, gs, t1,t2;
+    cuda::GpuMat buf;
+};
+
+double getPSNR_CUDA_optimized(const Mat& I1, const Mat& I2)
+{
+    static BufferPSNR b;
+
+    b.gI1.upload(I1);
+    b.gI2.upload(I2);
+    b.gI1.convertTo(b.t1, CV_32F);
+    b.gI2.convertTo(b.t2, CV_32F);
+    cuda::absdiff(b.t1.reshape(1), b.t2.reshape(1), b.gs);
+    cuda::multiply(b.gs, b.gs, b.gs);
+    double sse = cuda::sum(b.gs, b.buf)[0];
+    if( sse <= 1e-10) // for small values return zero
+        return 0;
+    else
+    {
+        double mse = sse /(double)(I1.channels() * I1.total());
+        double psnr = 10.0*log10((255*255)/mse);
+        return psnr;
+    }
+}
+
 double getPSNR_CUDA(const Mat& I1, const Mat& I2)
 {
     cuda::GpuMat gI1, gI2, gs, t1,t2;
@@ -147,6 +174,76 @@ double getPSNR(const Mat& I1, const Mat& I2)
         double psnr = 10.0*log10((255*255)/mse);
         return psnr;
     }
+}
+
+/*
+*
+*/
+
+struct BufferMSSIM                                     // Optimized CUDA versions
+{   // Data allocations are very expensive on CUDA. Use a buffer to solve: allocate once reuse later.
+    cuda::GpuMat gI1, gI2, gs, t1,t2;
+    cuda::GpuMat I1_2, I2_2, I1_I2;
+    vector<cuda::GpuMat> vI1, vI2;
+    cuda::GpuMat mu1, mu2;
+    cuda::GpuMat mu1_2, mu2_2, mu1_mu2;
+    cuda::GpuMat sigma1_2, sigma2_2, sigma12;
+    cuda::GpuMat t3;
+    cuda::GpuMat ssim_map;
+    cuda::GpuMat buf;
+};
+
+Scalar getMSSIM_CUDA_optimized( const Mat& i1, const Mat& i2)
+{
+    static BufferMSSIM b;
+
+    const float C1 = 6.5025f, C2 = 58.5225f;
+    /***************************** INITS **********************************/
+    b.gI1.upload(i1);
+    b.gI2.upload(i2);
+    cuda::Stream stream;
+    b.gI1.convertTo(b.t1, CV_32F, stream);
+    b.gI2.convertTo(b.t2, CV_32F, stream);
+    cuda::split(b.t1, b.vI1, stream);
+    cuda::split(b.t2, b.vI2, stream);
+    Scalar mssim;
+    Ptr<cuda::Filter> gauss = cuda::createGaussianFilter(b.vI1[0].type(), -1, Size(11, 11), 1.5);
+    for( int i = 0; i < b.gI1.channels(); ++i )
+    {
+        cuda::multiply(b.vI2[i], b.vI2[i], b.I2_2, 1, -1, stream);        // I2^2
+        cuda::multiply(b.vI1[i], b.vI1[i], b.I1_2, 1, -1, stream);        // I1^2
+        cuda::multiply(b.vI1[i], b.vI2[i], b.I1_I2, 1, -1, stream);       // I1 * I2
+        gauss->apply(b.vI1[i], b.mu1, stream);
+        gauss->apply(b.vI2[i], b.mu2, stream);
+        cuda::multiply(b.mu1, b.mu1, b.mu1_2, 1, -1, stream);
+        cuda::multiply(b.mu2, b.mu2, b.mu2_2, 1, -1, stream);
+        cuda::multiply(b.mu1, b.mu2, b.mu1_mu2, 1, -1, stream);
+        gauss->apply(b.I1_2, b.sigma1_2, stream);
+        cuda::subtract(b.sigma1_2, b.mu1_2, b.sigma1_2, cuda::GpuMat(), -1, stream);
+        //b.sigma1_2 -= b.mu1_2;  - This would result in an extra data transfer operation
+        gauss->apply(b.I2_2, b.sigma2_2, stream);
+        cuda::subtract(b.sigma2_2, b.mu2_2, b.sigma2_2, cuda::GpuMat(), -1, stream);
+        //b.sigma2_2 -= b.mu2_2;
+        gauss->apply(b.I1_I2, b.sigma12, stream);
+        cuda::subtract(b.sigma12, b.mu1_mu2, b.sigma12, cuda::GpuMat(), -1, stream);
+        //b.sigma12 -= b.mu1_mu2;
+        //here too it would be an extra data transfer due to call of operator*(Scalar, Mat)
+        cuda::multiply(b.mu1_mu2, 2, b.t1, 1, -1, stream); //b.t1 = 2 * b.mu1_mu2 + C1;
+        cuda::add(b.t1, C1, b.t1, cuda::GpuMat(), -1, stream);
+        cuda::multiply(b.sigma12, 2, b.t2, 1, -1, stream); //b.t2 = 2 * b.sigma12 + C2;
+        cuda::add(b.t2, C2, b.t2, cuda::GpuMat(), -12, stream);
+        cuda::multiply(b.t1, b.t2, b.t3, 1, -1, stream);     // t3 = ((2*mu1_mu2 + C1).*(2*sigma12 + C2))
+        cuda::add(b.mu1_2, b.mu2_2, b.t1, cuda::GpuMat(), -1, stream);
+        cuda::add(b.t1, C1, b.t1, cuda::GpuMat(), -1, stream);
+        cuda::add(b.sigma1_2, b.sigma2_2, b.t2, cuda::GpuMat(), -1, stream);
+        cuda::add(b.t2, C2, b.t2, cuda::GpuMat(), -1, stream);
+        cuda::multiply(b.t1, b.t2, b.t1, 1, -1, stream);     // t1 =((mu1_2 + mu2_2 + C1).*(sigma1_2 + sigma2_2 + C2))
+        cuda::divide(b.t3, b.t1, b.ssim_map, 1, -1, stream);      // ssim_map =  t3./t1;
+        stream.waitForCompletion();
+        Scalar s = cuda::sum(b.ssim_map, b.buf);
+        mssim.val[i] = s.val[0] / (b.ssim_map.rows * b.ssim_map.cols);
+    }
+    return mssim;
 }
 
 /*
@@ -711,13 +808,20 @@ public:
                 printf("\033[0m"); /* Default color */
 
                 /* Target tracked, check PSNR */
-
+#if 1
                 //double psnr = getPSNR(t->roiFrame, SubMat(capFrame, Center(*rr), Size(16, 16)));
-                double psnr = getPSNR_CUDA(t->roiFrame, SubMat(capFrame, Center(*rr), Size(16, 16)));
+                //double psnr = getPSNR_CUDA(t->roiFrame, SubMat(capFrame, Center(*rr), Size(16, 16)));
+                double psnr = getPSNR_CUDA_optimized(t->roiFrame, SubMat(capFrame, Center(*rr), Size(16, 16)));
 
                 printf("\033[0;33m"); /* Yellow */
                 printf("<%u> psnr = %f\n", t->m_id, psnr);
                 printf("\033[0m"); /* Default color */
+#else
+                Scalar s = getMSSIM_CUDA_optimized(t->roiFrame, SubMat(capFrame, Center(*rr), Size(16, 16)));
+                printf("\033[0;33m"); /* Yellow */
+                printf("<%u> mssim = %f, %f, %f\n", t->m_id, s.val[0], s.val[1], s.val[2]);
+                printf("\033[0m"); /* Default color */                
+#endif
 #endif
                 t->Update(*rr, capFrame, m_lastFrameTick);
                 roiRect.erase(rr);
