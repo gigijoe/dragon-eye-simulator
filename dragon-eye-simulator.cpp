@@ -1300,8 +1300,23 @@ int main(int argc, char**argv)
     Ptr<cuda::Filter> erodeFilter = cuda::createMorphologyFilter(MORPH_ERODE, CV_8UC1, elementErode);
     Ptr<cuda::Filter> dilateFilter = cuda::createMorphologyFilter(MORPH_DILATE, CV_8UC1, elementDilate);
 
+    double varThreshold = 8;
+    char *mog2_threshold = getenv("MOG2_THRESHOLD");
+    if(mog2_threshold) {
+        int len = strlen(mog2_threshold);
+        int i = 0;
+        for(i=0;i<len;i++) {
+            if(!isdigit(mog2_threshold[i]))
+                break;
+        }
+        if(i == len) { // string is number
+            varThreshold = atoi(mog2_threshold);
+            printf("MOG2_THRESHOLD = %f\n", varThreshold);
+        }
+    }
+
     /* background history count, varThreshold, shadow detection */
-    Ptr<cuda::BackgroundSubtractorMOG2> bsModel = cuda::createBackgroundSubtractorMOG2(30, 8, false);
+    Ptr<cuda::BackgroundSubtractorMOG2> bsModel = cuda::createBackgroundSubtractorMOG2(30, varThreshold, false);
     /* https://blog.csdn.net/m0_37901643/article/details/72841289 */
     /* Default variance of each gaussian component 15 / 75 / 75 */ 
     //cout << bsModel->getVarInit() << " / " << bsModel->getVarMax() << " / " << bsModel->getVarMax() << endl;
