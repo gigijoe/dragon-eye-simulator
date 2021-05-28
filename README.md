@@ -44,7 +44,7 @@ $ ./dragon-eye-simulator ../video/baseB001.mkv
 
 MOG2 threshold default value is 8. 
 The lower the value the more sensitive the camera.
-The suggested threshold value is between 10 to 30.
+The suggested threshold value is between 8 to 32.
 Setup MOG2 threshold from environment variable
 
 ```
