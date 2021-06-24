@@ -658,9 +658,7 @@ private:
     list< Target > m_targets;
     Rect m_newTargetRestrictionRect;
     list< list< Rect > > m_newTargetsHistory;
-#ifdef VIDEO_INPUT_FILE
     int m_horizonHeight;
-#endif
 
     size_t MaxTrackedCountOfTargets() {
         size_t maxCount = 0;
@@ -672,11 +670,7 @@ private:
     }
 
 public:
-#ifdef VIDEO_INPUT_FILE
     Tracker(int width, int height) : m_width(width), m_height(height), m_lastFrameTick(0), m_horizonHeight(height * HORIZON_FRACTION) {}
-#else
-    Tracker(int width, int height) : m_width(width), m_height(height), m_lastFrameTick(0) {}    
-#endif        
     
     void NewTargetRestriction(const Rect & r) {
         m_newTargetRestrictionRect = r;
@@ -701,11 +695,7 @@ public:
                 }
             }
 
-#ifdef VIDEO_INPUT_FILE
             if(r2.x < 0 || r2.x > m_width) { 
-#else
-            if(r2.y > 0 || r2.y > m_height) {
-#endif
 #ifdef DEBUG
                 Point p = t->m_rects.back().tl();
                 printf("\033[0;31m"); /* Red */
@@ -780,11 +770,7 @@ public:
                 }
 
                 if(t->m_vectors.size() == 0) { /* new target with zero velocity */
-#ifdef VIDEO_INPUT_FILE
                     if(rr->y >= m_horizonHeight) {
-#else
-                    if(rr->x >= (m_width * 4 / 5)) {
-#endif
                         if(n1 < (rr->width + rr->height)) /* Target tracked with Euclidean distance ... */
                             break;
                     } else {
@@ -793,11 +779,7 @@ public:
                             break;
                     }
                 } else if(n1 < (n0 * 3) / 2) { /* Target tracked with velocity and Euclidean distance ... */
-#ifdef VIDEO_INPUT_FILE
                     if(rr->y >= m_horizonHeight) {
-#else
-                    if(rr->x >= (m_width * 4 / 5)) {
-#endif
                         double a = t->CosineAngle(rr->tl());
                         if(a > 0.9659) /* cos(PI/12) */
                             break;
@@ -973,22 +955,14 @@ public:
             uint32_t overlap_count = 0;
             for(auto & l : m_newTargetsHistory) {
                 for(auto & r : l) {
-#ifdef VIDEO_INPUT_FILE
                     if(rr->y < m_horizonHeight)
-#else
-                    if(rr->x < (m_width * 4 / 5))
-#endif
                         continue;
                     if((r & *rr).area() > 0) { /* new target overlap previous new target */
                         ++overlap_count;
                     }
                 }
             }
-#ifdef VIDEO_INPUT_FILE
             if(rr->y >= m_horizonHeight) {
-#else
-            if(rr->x >= (m_width * 4 / 5)) {
-#endif
                 if(overlap_count > 0) {
                     rr->x -= rr->width;
                     rr->y -= rr->height;
@@ -1316,13 +1290,9 @@ int main(int argc, char**argv)
     Tracker tracker(capFrame.cols, capFrame.rows);
 
 #ifdef NEW_TARGET_RESTRICTION    
-#ifdef VIDEO_INPUT_FILE
     //tracker.NewTargetRestriction(Rect(160, 1080, 400, 200));
     tracker.NewTargetRestriction(Rect(cx - 200, cy - 200, 400, 200));
     //tracker.NewTargetRestriction(Rect(cx - 360, cy - 200, 720, 200));
-#else
-    tracker.NewTargetRestriction(Rect(cy - 200, cx - 200, 400, 200));
-#endif
 #endif
 
 #if defined(VIDEO_OUTPUT_FILE)
@@ -1390,11 +1360,7 @@ int main(int argc, char**argv)
 
 #if defined(VIDEO_OUTPUT_SCREEN) || defined(VIDEO_OUTPUT_FILE)
         capFrame.copyTo(outFrame);
-#ifdef VIDEO_INPUT_FILE
         line(outFrame, Point(cx, 0), Point(cx, cy), Scalar(0, 255, 0), 1);
-#else
-        line(outFrame, Point(0, cy), Point(cx, cy), Scalar(0, 255, 0), 1);
-#endif //VIDEO_INPUT_FILE
 #endif //VIDEO_OUTPUT_SCREEN
 
         list<Rect> roiRect;
@@ -1445,7 +1411,6 @@ int main(int argc, char**argv)
             if(t->ArcLength() > MIN_COURSE_LENGTH &&
                 t->AbsLength() > MIN_COURSE_LENGTH && 
                 t->TrackedCount() > MIN_TARGET_TRACKED_COUNT) {
-#ifdef VIDEO_INPUT_FILE
                 //if((t->BeginCenterPoint().x > cx && t->EndCenterPoint().x <= cx) ||
                 //    (t->BeginCenterPoint().x < cx && t->EndCenterPoint().x >= cx)) {
 
@@ -1453,10 +1418,6 @@ int main(int argc, char**argv)
                     (t->BeginCenterPoint().x < cx && t->EndCenterPoint().x >= cx) ||
                     (t->PreviousCenterPoint().x > cx && t->CurrentCenterPoint().x <= cx) ||
                     (t->PreviousCenterPoint().x < cx && t->CurrentCenterPoint().x >= cx)) {
-#else
-                if((t->BeginCenterPoint().y > cy && t->EndCenterPoint().y <= cy) ||
-                    (t->BeginCenterPoint().y < cy && t->EndCenterPoint().y >= cy)) {
-#endif //VIDEO_INPUT_FILE
                     bool tgr = t->Trigger(BUG_TRIGGER);
                     if(doTrigger == false)
                         doTrigger = tgr;
@@ -1467,11 +1428,7 @@ int main(int argc, char**argv)
         bool isNewTrigger = false;
         if(doTrigger) {
 #if defined(VIDEO_OUTPUT_SCREEN) || defined(VIDEO_OUTPUT_FILE)
-#ifdef VIDEO_INPUT_FILE
             line(outFrame, Point(cx, 0), Point(cx, cy), Scalar(0, 0, 255), 3);
-#else
-            line(outFrame, Point(0, cy), Point(cx, cy), Scalar(0, 0, 255), 3);
-#endif //VIDEO_INPUT_FILE
 #endif //VIDEO_OUTPUT_FRAME
             //bool isNewTrigger = false;
             long long duration = duration_cast<milliseconds>(steady_clock::now() - lastTriggerTime).count();
