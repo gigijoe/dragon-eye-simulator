@@ -59,6 +59,8 @@ using std::chrono::milliseconds;
 #define FAKE_TARGET_DETECTION           true
 #define BUG_TRIGGER                     true
 
+#define HORIZON_FRACTION                4 / 5
+
 #define VIDEO_INPUT_FILE
 
 #define VIDEO_OUTPUT_SCREEN
@@ -595,7 +597,7 @@ public:
                     printf("False trigger due to bug trigger count is %u\n", m_bugTriggerCount);
                     printf("\033[0m"); /* Default color */
 #endif
-                    if(m_bugTriggerCount <= 1) /* To avoid false bug detection */
+                    if(m_bugTriggerCount <= 3) /* To avoid false bug detection */
                         m_bugTriggerCount--;
                 } else {
                     m_triggerCount++;
@@ -656,10 +658,26 @@ private:
     list< Target > m_targets;
     Rect m_newTargetRestrictionRect;
     list< list< Rect > > m_newTargetsHistory;
+#ifdef VIDEO_INPUT_FILE
+    int m_horizonHeight;
+#endif
+
+    size_t MaxTrackedCountOfTargets() {
+        size_t maxCount = 0;
+        for(list< Target >::iterator t=m_targets.begin();t!=m_targets.end();t++) {
+            if(t->TrackedCount() > maxCount)
+                maxCount = t->TrackedCount();
+        }
+        return maxCount;
+    }
 
 public:
-    Tracker(int width, int height) : m_width(width), m_height(height), m_lastFrameTick(0) {}
-
+#ifdef VIDEO_INPUT_FILE
+    Tracker(int width, int height) : m_width(width), m_height(height), m_lastFrameTick(0), m_horizonHeight(height * HORIZON_FRACTION) {}
+#else
+    Tracker(int width, int height) : m_width(width), m_height(height), m_lastFrameTick(0) {}    
+#endif        
+    
     void NewTargetRestriction(const Rect & r) {
         m_newTargetRestrictionRect = r;
     }
@@ -683,6 +701,23 @@ public:
                 }
             }
 
+#ifdef VIDEO_INPUT_FILE
+            if(r2.x < 0 || r2.x > m_width) { 
+#else
+            if(r2.y > 0 || r2.y > m_height) {
+#endif
+#ifdef DEBUG
+                Point p = t->m_rects.back().tl();
+                printf("\033[0;31m"); /* Red */
+                printf("<%u> Otu of range target : (%d, %d), samples : %lu\n", t->m_id, p.x, p.y, t->m_rects.size());
+                printf("\033[0m"); /* Default color */
+                //if(t->m_rects.size() >= 10)
+                t->Info();
+#endif
+                t = m_targets.erase(t); /* Remove tracing target */
+                continue;
+            }
+
             double n0 = 0;
             if(t->m_vectors.size() > 0) {
                 n0 = cv::norm(r2.tl() - r1.tl()); /* Moving distance of predict target */
@@ -701,7 +736,6 @@ public:
 #if 0
                 if(t->m_vectors.size() > 0) {
                     double n = cv::norm(t->m_vectors.back());
-                    //if((n1 > (n * 10) || n > (n1 * 10)))
                     if(n1 > (n0 * 3) / 2)
                         continue; /* Too far */
                 }
@@ -747,7 +781,7 @@ public:
 
                 if(t->m_vectors.size() == 0) { /* new target with zero velocity */
 #ifdef VIDEO_INPUT_FILE
-                    if(rr->y >= (m_height * 4 / 5)) {
+                    if(rr->y >= m_horizonHeight) {
 #else
                     if(rr->x >= (m_width * 4 / 5)) {
 #endif
@@ -760,7 +794,7 @@ public:
                     }
                 } else if(n1 < (n0 * 3) / 2) { /* Target tracked with velocity and Euclidean distance ... */
 #ifdef VIDEO_INPUT_FILE
-                    if(rr->y >= (m_height * 4 / 5)) {
+                    if(rr->y >= m_horizonHeight) {
 #else
                     if(rr->x >= (m_width * 4 / 5)) {
 #endif
@@ -902,7 +936,7 @@ public:
                 printf("<%u> Target tracked : [%lu](%d, %d) -> (%d, %d)[%d, %d]\n", t->m_id, m_lastFrameTick, p.x, p.y, 
                     rr->x, rr->y, rr->x - t->m_rects.back().x, rr->y - t->m_rects.back().y);
                 printf("\033[0m"); /* Default color */
-
+#if 0
                 /* Target tracked, check PSNR */
 #if 1
                 //double psnr = getPSNR(t->roiFrame, SubMat(capFrame, Center(*rr), Size(16, 16)));
@@ -918,6 +952,9 @@ public:
                 printf("<%u> mssim = %f, %f, %f\n", t->m_id, s.val[0], s.val[1], s.val[2]);
                 printf("\033[0m"); /* Default color */                
 #endif
+
+#endif
+
 #endif
                 t->Update(*rr, capFrame, m_lastFrameTick);
                 roiRect.erase(rr);
@@ -928,15 +965,16 @@ public:
         list< Rect > newTargetList;
 
         for(list<Rect>::iterator rr=roiRect.begin();rr!=roiRect.end();++rr) { /* New targets registration */
-            if((m_newTargetRestrictionRect & *rr).area() > 0) {
-                continue;
+            if(!m_newTargetRestrictionRect.empty()) {
+                if((m_newTargetRestrictionRect & *rr).area() > 0)
+                    continue;
             }
 
             uint32_t overlap_count = 0;
             for(auto & l : m_newTargetsHistory) {
                 for(auto & r : l) {
 #ifdef VIDEO_INPUT_FILE
-                    if(rr->y < (m_height * 4 / 5))
+                    if(rr->y < m_horizonHeight)
 #else
                     if(rr->x < (m_width * 4 / 5))
 #endif
@@ -947,7 +985,7 @@ public:
                 }
             }
 #ifdef VIDEO_INPUT_FILE
-            if(rr->y >= (m_height * 4 / 5)) {
+            if(rr->y >= m_horizonHeight) {
 #else
             if(rr->x >= (m_width * 4 / 5)) {
 #endif
@@ -1003,8 +1041,12 @@ public:
             m_newTargetsHistory.pop_front();
         }
 
-        if(m_targets.size() > 1)
-            m_targets.sort(TargetSortByArea);
+        if(m_targets.size() > 1) {
+            if(MaxTrackedCountOfTargets() > 6)
+                m_targets.sort(TargetSortByTrackedCount);
+            else
+                m_targets.sort(TargetSortByArea);
+        }
     }
 
     inline list< Target > & TargetList() { return m_targets; }
@@ -1377,7 +1419,8 @@ int main(int argc, char**argv)
 #endif
         writeText( outFrame, currentDateTime(), Point(240, 40));
 
-        line(outFrame, Point(0, (CAMERA_WIDTH * 4 / 5)), Point(CAMERA_HEIGHT, (CAMERA_WIDTH * 4 / 5)), Scalar(127, 127, 0), 1);
+        //line(outFrame, Point(0, (CAMERA_WIDTH * 4 / 5)), Point(CAMERA_HEIGHT, (CAMERA_WIDTH * 4 / 5)), Scalar(127, 127, 0), 1);
+        line(outFrame, Point(0, (CAMERA_WIDTH * HORIZON_FRACTION)), Point(CAMERA_HEIGHT, (CAMERA_WIDTH * HORIZON_FRACTION)), Scalar(127, 127, 0), 1);
 #endif
         tracker.Update(roiRect, grayFrame, FAKE_TARGET_DETECTION);
 
@@ -1430,12 +1473,13 @@ int main(int argc, char**argv)
             line(outFrame, Point(0, cy), Point(cx, cy), Scalar(0, 0, 255), 3);
 #endif //VIDEO_INPUT_FILE
 #endif //VIDEO_OUTPUT_FRAME
+            //bool isNewTrigger = false;
             long long duration = duration_cast<milliseconds>(steady_clock::now() - lastTriggerTime).count();
             printf("duration = %lld\n" , duration);
             if(duration > 800) { /* new trigger */
                 isNewTrigger = true;
-                lastTriggerTime = steady_clock::now();
             }
+            lastTriggerTime = steady_clock::now();
         }
 
 #if defined(VIDEO_OUTPUT_SCREEN) || defined(VIDEO_OUTPUT_FILE)
