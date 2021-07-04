@@ -46,12 +46,13 @@ using std::chrono::milliseconds;
 #define MIN_TARGET_HEIGHT 6
 #define MAX_TARGET_WIDTH 320
 #define MAX_TARGET_HEIGHT 320
+#define MAX_TARGET_TRACKING_DISTANCE    360
 
 #define MAX_NUM_TARGET                  9
 #define MAX_NUM_TRIGGER                 1
 #define MAX_NUM_FRAME_MISSING_TARGET    3
 
-#define MIN_COURSE_LENGTH               16    /* Minimum course length of RF trigger after detection of cross line */
+#define MIN_COURSE_LENGTH               16     /* Minimum course length of RF trigger after detection of cross line */
 #define MIN_TARGET_TRACKED_COUNT        3      /* Minimum target tracked count of RF trigger after detection of cross line (3 * 33ms = 99ms) */
 
 #undef NEW_TARGET_RESTRICTION
@@ -59,7 +60,7 @@ using std::chrono::milliseconds;
 #define FAKE_TARGET_DETECTION           true
 #define BUG_TRIGGER                     true
 
-#define HORIZON_FRACTION                4 / 5
+#define HORIZON_RATIO                7 / 10
 
 #define VIDEO_INPUT_FILE
 
@@ -276,8 +277,14 @@ const Mat SubMat(const Mat & capFrame, const Point & center, const Size & size)
         return capFrame(r);
 }
 
+/*
 const Point & Center(Rect & r) {
     return std::move(Point(r.tl().x + (r.width / 2), r.tl().y + (r.height / 2)));
+}
+*/
+
+static inline Point Center(Rect & r) {
+    return Point(r.tl().x + (r.width / 2), r.tl().y + (r.height / 2));
 }
 
 bool isLineIntersection(Point & s0, Point & e0, Point & s1, Point & e1) {
@@ -452,7 +459,7 @@ public:
         return dp;
     }
 
-    double CosineAngle(const Point & p) {
+    double CosineAngleTl(const Point & p) {
         size_t i = m_rects.size();
         if(i < 2)
             return 0;
@@ -462,6 +469,40 @@ public:
         v1.y = p.y - m_rects[i].tl().y;
         v2.x = m_rects[i].tl().x - m_rects[i-1].tl().x;
         v2.y = m_rects[i].tl().y - m_rects[i-1].tl().y;
+
+        /* A.B = |A||B|cos() */
+        /* cos() = A.B / |A||B| */
+        return v1.dot(v2) / (norm(v1) * norm(v2));
+    }
+
+    double CosineAngleBr(const Point & p) {
+        size_t i = m_rects.size();
+        if(i < 2)
+            return 0;
+        --i;
+        Point v1, v2;
+        v1.x = p.x - m_rects[i].br().x;
+        v1.y = p.y - m_rects[i].br().y;
+        v2.x = m_rects[i].br().x - m_rects[i-1].br().x;
+        v2.y = m_rects[i].br().y - m_rects[i-1].br().y;
+
+        /* A.B = |A||B|cos() */
+        /* cos() = A.B / |A||B| */
+        return v1.dot(v2) / (norm(v1) * norm(v2));
+    }
+
+    double CosineAngleCt(const Point & p) {
+        size_t i = m_rects.size();
+        if(i < 2)
+            return 0;
+        --i;
+        Point v1, v2;
+        Point ct0 = Center(m_rects[i]);
+        Point ct1 = Center(m_rects[i-1]);
+        v1.x = p.x - ct0.x;
+        v1.y = p.y - ct0.y;
+        v2.x = ct0.x - ct1.x;
+        v2.y = ct0.y - ct1.y;
 
         /* A.B = |A||B|cos() */
         /* cos() = A.B / |A||B| */
@@ -479,10 +520,8 @@ public:
             for(int i=0;i<m_rects.size()-1;i++) {
                 //Point p0 = m_rects[i].tl();
                 //Point p1 = m_rects[i+1].tl();
-                Point p0 = Center(m_rects[i]);
-                Point p1 = Center(m_rects[i+1]);
                 //line(outFrame, p0, p1, Scalar(0, 0, 255), 1);
-                line(outFrame, p0, p1, color, 1);
+                line(outFrame, Center(m_rects[i]), Center(m_rects[i+1]), color, 1);
                 //line(outFrame, p0, p1, color, 1);
                 //Point v = p1 - p0;
                 //printf("[%d,%d]\n", v.x, v.y);
@@ -555,11 +594,11 @@ public:
     inline unsigned long FrameTick() { return m_lastFrameTick; }
     inline const Rect & LastRect() { return m_rects.back(); }
 
-    inline const Point & BeginCenterPoint() { return Center(m_rects[0]); }
-    inline const Point & EndCenterPoint() { return Center(m_rects.back()); }
+    inline const Point BeginCenterPoint() { return Center(m_rects[0]); }
+    inline const Point EndCenterPoint() { return Center(m_rects.back()); }
 
-    inline const Point & CurrentCenterPoint() { return Center(m_rects.back()); }
-    const Point & PreviousCenterPoint() {
+    inline const Point CurrentCenterPoint() { return Center(m_rects.back()); }
+    const Point PreviousCenterPoint() {
         if(m_rects.size() < 2)
             return std::move(Point(0, 0));
 
@@ -577,7 +616,7 @@ public:
             printf("\033[0m"); /* Default color */
 #endif
         } else if(enableBugTrigger) { 
-            if((m_averageArea < 144 && m_normVelocity > 25) || /* 12 x 12 */
+            if((m_averageArea < 144 && m_normVelocity > 30) || /* 12 x 12 */
                     (m_averageArea < 256 && m_normVelocity > 40) || /* 16 x 16 */
                     (m_averageArea < 324 && m_normVelocity > 50) || /* 18 x 18 */
                     (m_averageArea < 400 && m_normVelocity > 75) || /* 20 x 20 */
@@ -645,10 +684,20 @@ static Rect MergeRect(Rect & r1, Rect & r2) {
     Rect r;
     r.x = min(r1.x, r2.x);
     r.y = min(r1.y, r2.y);
-    r.width = r2.x + r2.width - r1.x;
+    r.width = max(r1.x + r1.width, r2.x + r2.width) - r.x;
     r.height = max(r1.y + r1.height, r2.y + r2.height) - r.y;
     return r;
 }
+
+class RectSortByDistance {
+    Rect const & t;
+public:
+    RectSortByDistance(Rect const & r) : t(r) {}
+
+    bool operator()(Rect const & a, Rect const & b) {
+        return cv::norm(a.tl() - t.tl()) > cv::norm(b.tl() - t.tl());
+    }
+};
 
 class Tracker
 {
@@ -670,8 +719,10 @@ private:
     }
 
 public:
-    Tracker(int width, int height) : m_width(width), m_height(height), m_lastFrameTick(0), m_horizonHeight(height * HORIZON_FRACTION) {}
+    Tracker(int width, int height) : m_width(width), m_height(height), m_lastFrameTick(0), m_horizonHeight(height * HORIZON_RATIO) {}
     
+    int HorizonHeight() const { return m_horizonHeight; }
+
     void NewTargetRestriction(const Rect & r) {
         m_newTargetRestrictionRect = r;
     }
@@ -695,7 +746,8 @@ public:
                 }
             }
 
-            if(r2.x < 0 || r2.x > m_width) { 
+            if(t->m_triggerCount > 0 &&
+                (r2.x < 0 || r2.x > m_width)) { 
 #ifdef DEBUG
                 Point p = t->m_rects.back().tl();
                 printf("\033[0;31m"); /* Red */
@@ -710,18 +762,23 @@ public:
 
             double n0 = 0;
             if(t->m_vectors.size() > 0) {
-                n0 = cv::norm(r2.tl() - r1.tl()); /* Moving distance of predict target */
+                n0 = cv::norm(Center(r2) - Center(r1)); /* Moving distance of predict target */
             }
-            
+
+            //sort(roiRect.begin(), roiRect.end(), RectSortByDistance(r2));
+            //roiRect.sort(RectSortByDistance(r2));
+
             for(rr=roiRect.begin();rr!=roiRect.end();++rr) {
 
                 if(r1.area() > (rr->area() * 32) ||
                     rr->area() > (r1.area() * 32)) /* Object and target area difference */
                     continue;
 
-                double n1 = cv::norm(rr->tl() - r1.tl()); /* Distance between object and target */
 
-                if(n1 > 320)
+                Point rrct = Center(*rr);
+                double n1 = cv::norm(rrct - Center(r1)); /* Distance between object and target */
+
+                if(n1 > MAX_TARGET_TRACKING_DISTANCE) /* 360 */
                     continue; /* Too far */
 #if 0
                 if(t->m_vectors.size() > 0) {
@@ -774,17 +831,17 @@ public:
                         if(n1 < (rr->width + rr->height)) /* Target tracked with Euclidean distance ... */
                             break;
                     } else {
-                        int factor = 3;
+                        int factor = 2;
                         if(n1 < (rr->width + rr->height) * factor) /* Target tracked with Euclidean distance ... */
                             break;
                     }
                 } else if(n1 < (n0 * 3) / 2) { /* Target tracked with velocity and Euclidean distance ... */
                     if(rr->y >= m_horizonHeight) {
-                        double a = t->CosineAngle(rr->tl());
+                        double a = t->CosineAngleCt(rrct);
                         if(a > 0.9659) /* cos(PI/12) */
                             break;
                     } else {
-                        //double a = t->CosineAngle(rr->tl());
+                        //double a = t->CosineAngleTl(rr->tl());
                         //if(a > 0.8587) /* cos(PI/6) */
                         //    break;
                     }
@@ -799,39 +856,25 @@ public:
                         rr->area() > (r1.area() * 32)) /* Object and target area difference */
                         continue;
 
-                    double n1 = cv::norm(rr->tl() - r1.tl()); /* Distance between object and target */
+                    Point rrct = Center(*rr);
+                    double n1 = cv::norm(rrct - Center(r1)); /* Distance between object and target */
 
-                    if(n1 > 320)
+                    if(n1 > (MAX_TARGET_TRACKING_DISTANCE / 2)) /* 180 */
                         continue; /* Too far */
-#if 1
-                    //double n = cv::norm(t->m_vectors.back());
-                    //if((n1 > (n * 10) || n > (n1 * 10)))
-                    if(n1 > (n0 * 3) / 2)
-                        continue; /* Too far */
-#endif
-                    double a = t->CosineAngle(rr->tl()); /* Cos angle with top left of ROI */
-                    double n2 = cv::norm(rr->tl() - r2.tl());
-#if 0
-                    if(a > 0.5 && 
-                        n2 < (n0 * 1)) { /* cos(PI/3) */
-                        break;
-                    }               
 
-                    if(a > 0.8587 && 
-                        n2 < (n0 * 2)) { /* cos(PI/6) */
-                        break;
-                    }
-#endif
-                    /* This number has been tested by various video. Don't touch it !!! */
-                    if(a > 0.5 &&
-                        n2 < (n0 * 3) / 2) { /* cos(PI/3) */
+                    //if(n1 > (n0 * 3) / 2)
+                    //    continue; /* Too far */
+
+                    double a = t->CosineAngleCt(rrct);
+                    double n2 = cv::norm(rrct - Center(r2));
+
+                    if(a > 0.5 && /* cos(PI/3) */
+                        n2 < (n0 * 3) / 2) { 
                         break;
                     }
 
-                    a = t->CosineAngle(rr->br()); /* Cos angle with bottom right of ROI */
-                    n2 = cv::norm(rr->br() - r2.br());
-                    if(a > 0.5 && 
-                        n2 < (n0 * 3) / 2) { /* cos(PI/3) */
+                    if(a > 0.8587 && /* cos(PI/6) */
+                        n1 < (t->m_normVelocity * f * 2)) {
                         break;
                     }
                 }
@@ -840,10 +883,10 @@ public:
             if(rr == roiRect.end()) { /* Target missing ... */
                 bool isTargetLost = false;
                 if(t->m_vectors.size() > 1) {
-                    uint32_t compensation = (t->TrackedCount() / 10); /* Tracking more frames with more sample */
+                    uint32_t compensation = (t->TrackedCount() / 6); /* Tracking more frames with more sample */
                     if(compensation > 5)
                         compensation = 5;
-                    if(f > ((MAX_NUM_FRAME_MISSING_TARGET * 3) + compensation)) /* Target still missing for over X frames */
+                    if(f > (MAX_NUM_FRAME_MISSING_TARGET + compensation)) /* Target still missing for over X frames */
                         isTargetLost = true;
                 } else { /* new target with zero velocity */
                     if(f > MAX_NUM_FRAME_MISSING_TARGET) 
@@ -861,55 +904,6 @@ public:
                     t = m_targets.erase(t); /* Remove tracing target */
                     continue;
                 } else {
-#if 0                    
-#ifdef DEBUG
-                    Point p = t->m_rects.back().tl();
-                    printf("<%u> Search target : (%d, %d) -> [%d, %d]\n", t->m_id, p.x, p.y, 
-                        (t->m_velocity.x + t->m_acceleration.x) * f, (t->m_velocity.y + t->m_acceleration.y) * f);
-#endif
-                    for(list< Target >::iterator tt=m_targets.begin();tt!=m_targets.end();++tt) {
-                        if(tt->m_id == t->m_id)
-                            continue;
-#if 0                        
-                        if((t->m_rects.back() & tt->m_rects.front()).area() > 0) { /**/
-                            t->Update(*tt, capFrame);
-#ifdef DEBUG
-                            printf("\033[0;33m"); /* Yellow */
-                            printf("Merge targets : <%d> -->> <%d>\n", tt->m_id, t->m_id);
-                            printf("\033[0m"); /* Default color */
-#endif
-                            m_targets.erase(tt);
-                            break;
-                        }
-#endif
-#if 0
-                        if(t->m_vectors.size() > 0) {
-                            Rect r = r1;
-                            bool tracked = false;
-                            Point v = t->m_vectors.back();
-                            for(int i=0;i<=f;i++) {
-                                if((r & tt->m_rects.front()).area() > 0) { /* Target tracked with velocity ... */
-                                    t->Update(*tt, capFrame);
-#ifdef DEBUG
-                                    printf("\033[0;33m"); /* Yellow */
-                                    printf("Merge targets : <%d> -->> <%d>\n", tt->m_id, t->m_id);
-                                    printf("\033[0m"); /* Default color */
-#endif
-                                    m_targets.erase(tt);
-                                    tracked = true;
-                                    break;
-                                }
-                                v.x += t->m_acceleration.x;
-                                v.y += t->m_acceleration.y;
-                                r.x += v.x;
-                                r.y += v.y;
-                            }
-                            if(tracked)
-                                break;
-                        }
-#endif                        
-                    }
-#endif
                 }
             } else { /* Target tracked ... */
 #ifdef DEBUG
@@ -978,35 +972,12 @@ public:
                 printf("<X> Fake target : (%u)\n", overlap_count);
 #endif
             } else {
-                bool isMerged = false;
-#if 0                
-                for(list< Target >::iterator tt=m_targets.begin();tt!=m_targets.end();++tt) {
-                    auto itt = tt->m_rects.rbegin();
-                    for(int i=1;i<3;i++) {
-                        if(tt->m_rects.size() <= i)
-                            continue;
-                        advance(itt, 1);
-                        if((*rr & *itt).area() > 0) {
-                            tt->m_rects.insert(itt.base(), *rr);
-                            isMerged = true;
+                m_targets.push_back(Target(*rr, capFrame, m_lastFrameTick));
 #ifdef DEBUG
-                            printf("<%u> Merge target : [%lu](%d, %d)\n", tt->m_id, m_lastFrameTick, rr->tl().x, rr->tl().y);
+                printf("\033[0;32m"); /* Green */
+                printf("<%u> New target : [%lu](%d, %d)\n", m_targets.back().m_id, m_lastFrameTick, rr->tl().x, rr->tl().y);
+                printf("\033[0m"); /* Default color */
 #endif
-                            break;
-                        }
-                    }
-                    if(isMerged)
-                        break;
-                }
-#endif
-                if(isMerged == false) {
-                    m_targets.push_back(Target(*rr, capFrame, m_lastFrameTick));
-#ifdef DEBUG
-                    printf("\033[0;32m"); /* Green */
-                    printf("<%u> New target : [%lu](%d, %d)\n", m_targets.back().m_id, m_lastFrameTick, rr->tl().x, rr->tl().y);
-                    printf("\033[0m"); /* Default color */
-#endif
-                }
             }
         }
 
@@ -1118,7 +1089,7 @@ void VideoWriterThread(int width, int height)
 
 #endif
 
-void contour_moving_object(Mat & frame, Mat & foregroundMask, list<Rect> & roiRect, int y_offset = 0)
+void contour_moving_object(Mat & frame, Mat & foregroundMask, list<Rect> & roiRect)
 {
     uint32_t num_target = 0;
 
@@ -1126,21 +1097,34 @@ void contour_moving_object(Mat & frame, Mat & foregroundMask, list<Rect> & roiRe
     vector< Vec4i > hierarchy;
 //  findContours(foregroundMask, contours, hierarchy, RETR_TREE, CHAIN_APPROX_NONE);
     findContours(foregroundMask, contours, hierarchy, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
-#if 0    
-    sort(contours.begin(), contours.end(), [](vector<cv::Point> contour1, vector<cv::Point> contour2) {  
-            //return (contour1.size() > contour2.size()); /* Outline length */
-            return (cv::contourArea(contour1) > cv::contourArea(contour2)); /* Area */
-        }); /* Contours sort by area, controus[0] is largest */
-#endif
 #if 1 /* Anti exposure burst */   
     if(contours.size() > 64)
         return;
 #endif
-    vector<Rect> boundRect( contours.size() );
+    vector<Rect> boundRect;
 
     for(int i=0; i<contours.size(); i++) {
-        //approxPolyDP( Mat(contours[i]), contours[i], 3, true );
-        boundRect[i] = boundingRect( Mat(contours[i]) );
+        Rect r = boundingRect(Mat(contours[i]));
+        if(r.area() < 400 && r.br().y > CAMERA_WIDTH * HORIZON_RATIO) {
+            Point ct = Center(r);
+            bool isMerged = false;
+            for(auto it=boundRect.begin();it!=boundRect.end();++it) {
+                if(it->area() < 400) { /* Less than 20x20 */
+                    if((r & *it).area() > 0) { /* Merge overlaped rect */
+                        isMerged = true;
+                    } else if(cv::norm(ct - Center(*it)) < 36) { /* Merge closely enough rect */
+                        isMerged = true;
+                    }
+                }
+                if(isMerged) {
+                    *it = MergeRect(r, *it);
+                    break;
+                }
+            }
+            if(isMerged)
+                continue;
+        }
+        boundRect.push_back(r);
     }
 
     sort(boundRect.begin(), boundRect.end(), [](const Rect & r1, const Rect & r2) {  
@@ -1149,10 +1133,6 @@ void contour_moving_object(Mat & frame, Mat & foregroundMask, list<Rect> & roiRe
         }); /* Rects sort by area, boundRect[0] is largest */
 
     for(int i=0; i<boundRect.size(); i++) {
-        //approxPolyDP( Mat(contours[i]), contours[i], 3, true );
-        //boundRect[i] = boundingRect( Mat(contours[i]) );
-        //drawContours(contoursImg, contours, i, color, 2, 8, hierarchy);
-
         if(boundRect[i].width > MAX_TARGET_WIDTH &&
             boundRect[i].height > MAX_TARGET_HEIGHT)
             continue; /* Extremely large object */
@@ -1173,23 +1153,21 @@ void contour_moving_object(Mat & frame, Mat & foregroundMask, list<Rect> & roiRe
         if((maxVal - minVal) < 16)
             continue; /* Too small, drop it. */
 #endif
-#if 0
+#if 1
         if(roiFrame.cols > roiFrame.rows && (roiFrame.cols >> 4) > roiFrame.rows)
             continue; /* Ignore thin object */
 #endif
-        boundRect[i].y += y_offset;
         roiRect.push_back(boundRect[i]);
         if(++num_target >= MAX_NUM_TARGET)
             break;
-    }    
-
+    }
 }
 
 void extract_moving_object(Mat & frame, 
     Mat & elementErode, Mat & elementDilate, 
     Ptr<cuda::Filter> & erodeFilter, Ptr<cuda::Filter> & dilateFilter, 
     Ptr<cuda::BackgroundSubtractorMOG2> & bsModel, 
-    list<Rect> & roiRect, int y_offset = 0)
+    list<Rect> & roiRect)
 {
     Mat foregroundMask;
     cuda::GpuMat gpuFrame;
@@ -1216,7 +1194,7 @@ void extract_moving_object(Mat & frame,
     imshow("FG Frame", tFrame);
 #endif
 
-    contour_moving_object(frame, foregroundMask, roiRect, y_offset);
+    contour_moving_object(frame, foregroundMask, roiRect);
 }
 
 int main(int argc, char**argv)
@@ -1384,9 +1362,12 @@ int main(int argc, char**argv)
         writeText( outFrame, "New Target Restriction Area", Point(cx - 200, cy - 200));
 #endif
         writeText( outFrame, currentDateTime(), Point(240, 40));
+        char textStr[16];
+        snprintf(textStr, 16, "%ld", loopCount);
+        writeText( outFrame, textStr, Point(560, 40));
 
         //line(outFrame, Point(0, (CAMERA_WIDTH * 4 / 5)), Point(CAMERA_HEIGHT, (CAMERA_WIDTH * 4 / 5)), Scalar(127, 127, 0), 1);
-        line(outFrame, Point(0, (CAMERA_WIDTH * HORIZON_FRACTION)), Point(CAMERA_HEIGHT, (CAMERA_WIDTH * HORIZON_FRACTION)), Scalar(127, 127, 0), 1);
+        line(outFrame, Point(0, (CAMERA_WIDTH * HORIZON_RATIO)), Point(CAMERA_HEIGHT, (CAMERA_WIDTH * HORIZON_RATIO)), Scalar(0, 255, 255), 1);
 #endif
         tracker.Update(roiRect, grayFrame, FAKE_TARGET_DETECTION);
 
@@ -1411,9 +1392,6 @@ int main(int argc, char**argv)
             if(t->ArcLength() > MIN_COURSE_LENGTH &&
                 t->AbsLength() > MIN_COURSE_LENGTH && 
                 t->TrackedCount() > MIN_TARGET_TRACKED_COUNT) {
-                //if((t->BeginCenterPoint().x > cx && t->EndCenterPoint().x <= cx) ||
-                //    (t->BeginCenterPoint().x < cx && t->EndCenterPoint().x >= cx)) {
-
                 if((t->BeginCenterPoint().x > cx && t->EndCenterPoint().x <= cx) ||
                     (t->BeginCenterPoint().x < cx && t->EndCenterPoint().x >= cx) ||
                     (t->PreviousCenterPoint().x > cx && t->CurrentCenterPoint().x <= cx) ||
@@ -1430,7 +1408,6 @@ int main(int argc, char**argv)
 #if defined(VIDEO_OUTPUT_SCREEN) || defined(VIDEO_OUTPUT_FILE)
             line(outFrame, Point(cx, 0), Point(cx, cy), Scalar(0, 0, 255), 3);
 #endif //VIDEO_OUTPUT_FRAME
-            //bool isNewTrigger = false;
             long long duration = duration_cast<milliseconds>(steady_clock::now() - lastTriggerTime).count();
             printf("duration = %lld\n" , duration);
             if(duration > 800) { /* new trigger */
