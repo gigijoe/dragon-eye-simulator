@@ -55,12 +55,12 @@ using std::chrono::milliseconds;
 #define MIN_COURSE_LENGTH               16     /* Minimum course length of RF trigger after detection of cross line */
 #define MIN_TARGET_TRACKED_COUNT        3      /* Minimum target tracked count of RF trigger after detection of cross line (3 * 33ms = 99ms) */
 
-#undef NEW_TARGET_RESTRICTION
+#define NEW_TARGET_RESTRICTION
 
 #define FAKE_TARGET_DETECTION           true
 #define BUG_TRIGGER                     true
 
-#define HORIZON_RATIO                7 / 10
+#define HORIZON_RATIO                8 / 10
 
 #define VIDEO_INPUT_FILE
 
@@ -1381,13 +1381,15 @@ int main(int argc, char**argv)
             }
         }        
 #endif
+
         bool doTrigger = false;
         for(list< Target >::iterator t=targets.begin();t!=targets.end();++t) {
 #if defined(VIDEO_OUTPUT_SCREEN) || defined(VIDEO_OUTPUT_FILE)
             t->Draw(outFrame, true);
 #endif
-            if(t->TriggerCount() > 0 && t->TriggerCount() < MAX_NUM_TRIGGER)
+            if(t->TriggerCount() > 0 && t->TriggerCount() < MAX_NUM_TRIGGER) {
                 doTrigger = true;
+            }
 
             if(t->ArcLength() > MIN_COURSE_LENGTH &&
                 t->AbsLength() > MIN_COURSE_LENGTH && 
@@ -1397,8 +1399,44 @@ int main(int argc, char**argv)
                     (t->PreviousCenterPoint().x > cx && t->CurrentCenterPoint().x <= cx) ||
                     (t->PreviousCenterPoint().x < cx && t->CurrentCenterPoint().x >= cx)) {
                     bool tgr = t->Trigger(BUG_TRIGGER);
-                    if(doTrigger == false)
+                    if(doTrigger == false) {
                         doTrigger = tgr;
+#if 0                        
+                        if(doTrigger && (t->LastRect().width >= 16 || t->LastRect().height >= 16)) {
+printf("R O I F R A M E\n");
+                            Rect roi = t->LastRect();
+                            printf("roi (%d, %d) / [%d, %d]\n", roi.x, roi.y, roi.width, roi.height);
+                            Point c = Center(roi);
+                            if(roi.width < 64) {
+                                roi.x = (roi.x >= 32) ? (roi.x - (32 - (roi.width / 2))) : 0;
+                                roi.width = 64;
+                                if((roi.x + roi.width) > capFrame.cols)
+                                    roi.x = capFrame.cols - 65;
+                            }
+                            if(roi.height < 64) {
+                                roi.y = (roi.y >= 32) ? (roi.y - (32 - (roi.height / 2))) : 0;
+                                roi.height = 64;
+                                if((roi.y + roi.height) > capFrame.rows)
+                                    roi.y = capFrame.rows - 65;
+                            }                                
+
+                            Mat roiFrame = capFrame(roi);
+                            Rect r = roi;
+                            r.x = 0;
+                            r.y = 0;
+                            Mat rFrame = outFrame(r);
+                            roiFrame.copyTo(rFrame);
+
+                            static uint32_t s_roi_index = 0;
+                            string sp(argv[1]);
+                            sp.erase(remove(sp.begin(), sp.end(), '.'), sp.end());
+                            replace(sp.begin(), sp.end(), '/', '_');
+                            char fn[128];
+                            snprintf(fn, 128, "../64x64/%s_%dx%d_%03d.png", sp.c_str(), rFrame.cols, rFrame.rows, s_roi_index++);
+                            imwrite(fn, rFrame);
+                        }
+#endif                        
+                    }
                 }
             }
         }
@@ -1438,7 +1476,7 @@ int main(int argc, char**argv)
         int k = waitKey(1);
         if(k == 27) { /* Press key 'ESC' to quit */
             break;
-#ifdef VIDEO_OUTPUT_FILE            
+#if 1            
         } else if(k == 'p') { /* Press key 'p' to pause or resume */
 #else
         } else if(k == 'p' || isNewTrigger) { /* Press key 'p' to pause or resume */
