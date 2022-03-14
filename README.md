@@ -67,6 +67,8 @@ If output result to file
 
 ## Image Inference
 
+Inference triggered target, identify if it is [0]glider or [1]paraglider
+
 Download model engine
 ```
 wget https://drive.google.com/file/d/1-gd8gdyl4l8k4vXObf6GFGeXYoIptAsc/view?usp=sharing -O model.engine
