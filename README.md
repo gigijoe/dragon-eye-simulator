@@ -65,6 +65,18 @@ If output result to file
   #define VIDEO_OUTPUT_FILE "base"
 ```
 
+## Image Inference
+
+Download model engine
+```
+wget https://drive.google.com/file/d/1-gd8gdyl4l8k4vXObf6GFGeXYoIptAsc/view?usp=sharing -O model.engine
+```
+
+Enable inference
+```
+  #define IMAGE_INFERENCE
+```
+
 ## Result
 
 [Demo Video](https://youtu.be/XU2usfSNTS0)

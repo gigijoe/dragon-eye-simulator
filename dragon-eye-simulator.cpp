@@ -70,6 +70,12 @@ using std::chrono::milliseconds;
 
 #define VIDEO_FRAME_DROP 30
 
+//#define IMAGE_INFERENCE
+
+#ifdef IMAGE_INFERENCE
+#include "image_inference.hpp" 
+#endif
+
 static bool bShutdown = false;
 
 void sig_handler(int signo)
@@ -541,7 +547,7 @@ public:
             m_id, m_rects.size(), m_averageArea, m_arcLength, m_absLength, m_normVelocity, m_angleOfTurn);
         printf("\nVectors : length\n");      
         for(auto v : m_vectors) {
-            printf("%.1f\t", norm(v));
+            printf("(%d, %d)[%.1f]\t", v.x, v.y, norm(v));
         }
         printf("\n");
         printf("maximum = %.1f, minimum = %.1f\n", m_maxVector, m_minVector);      
@@ -664,6 +670,8 @@ public:
 
     inline int AverageArea() { return m_averageArea; }
     inline size_t TrackedCount() { return m_rects.size(); }
+
+    vector< Point > & Vectors() { return m_vectors; }
 
     friend class Tracker;
 };
@@ -1197,6 +1205,25 @@ void extract_moving_object(Mat & frame,
     contour_moving_object(frame, foregroundMask, roiRect);
 }
 
+void color_image_equalize_histogram(cv::Mat & src)
+{
+    Mat imageq;
+    Mat histImage;
+
+    vector<Mat> bgr;
+    split(src, bgr);
+
+    //equalize image
+    equalizeHist(bgr[0], bgr[0]);
+    equalizeHist(bgr[1], bgr[1]);
+    equalizeHist(bgr[2], bgr[2]);
+
+    merge(bgr, imageq);
+
+    namedWindow("Equalized image", WINDOW_AUTOSIZE);
+    imshow( "Equalized image", imageq );
+}
+
 int main(int argc, char**argv)
 {
     double fps = 0;
@@ -1204,13 +1231,26 @@ int main(int argc, char**argv)
     if(signal(SIGINT, sig_handler) == SIG_ERR)
         printf("\ncan't catch SIGINT\n");
 
+    cuda::printShortCudaDeviceInfo(cuda::getDevice());
+    std::cout << cv::getBuildInformation() << std::endl;
+
+#ifdef IMAGE_INFERENCE    
+    ImageInference *ifer = new ImageInference;
+    cout << "Load " << MODEL_ENGINE << endl;
+    cout << "Please wait ..." << endl;
+// TODO : Dynamic model engine file path ...
+    if(ifer->AllocContext(MODEL_ENGINE) == 0)
+        ifer->oneInference();
+    else {
+        cout << "Fail to load " << MODEL_ENGINE << " -->> Abort !!!" << endl;
+        exit(1);
+    }
+#endif
+
     Mat capFrame, bgFrame;
 #if defined(VIDEO_OUTPUT_SCREEN) || defined(VIDEO_OUTPUT_FILE)
     Mat outFrame;
 #endif
-
-    cuda::printShortCudaDeviceInfo(cuda::getDevice());
-    std::cout << cv::getBuildInformation() << std::endl;
 
 #ifdef VIDEO_INPUT_FILE
     VideoCapture cap;
@@ -1401,6 +1441,74 @@ int main(int argc, char**argv)
                     bool tgr = t->Trigger(BUG_TRIGGER);
                     if(doTrigger == false) {
                         doTrigger = tgr;
+#ifdef IMAGE_INFERENCE    
+                        if(ifer->ready && 
+                            doTrigger && (t->LastRect().width >= 32 || t->LastRect().height >= 32)) {
+printf("I N F E R E N C E\n");
+                            Rect roi = t->LastRect();
+                            if(roi.width < 32) {
+                                roi.width = 32;
+                            }
+                            if(roi.height < 32) {
+                                roi.height = 32;
+                            }
+                            auto wh = std::max(roi.width, roi.height);
+
+                            Point v = t->Vectors().back();
+                            if(v.x > 0 && roi.width < roi.height) {
+                                roi.x = roi.x + roi.width - roi.height;
+                            }
+
+                            roi.width = roi.height = wh;
+
+                            if(roi.x < 0)
+                                roi.x = 0;
+
+                            if(roi.y < 0)
+                                roi.y = 0;
+
+                            if(roi.x + roi.width >= CAMERA_HEIGHT)
+                                roi.x = CAMERA_HEIGHT - roi.width - 1;
+
+                            if(roi.y + roi.height >= CAMERA_WIDTH)
+                                roi.y = CAMERA_WIDTH - roi.height - 1;
+
+                            Mat roiFrame = capFrame(roi);
+                            int r = ifer->Inference(roiFrame);
+                            printf("Inference index is %d\n", r);
+#if 0
+                            static uint32_t s_roi_index = 0;
+
+                            string sp(argv[1]);
+                            sp.erase(remove(sp.begin(), sp.end(), '.'), sp.end());
+                            replace(sp.begin(), sp.end(), '/', '_');
+
+                            char dname[128];
+                            if(r == 0)  
+                                snprintf(dname, 128, "../P/%s", sp.c_str());
+                            else
+                                snprintf(dname, 128, "../N/%s", sp.c_str());
+
+                            DIR *d;
+                            d = opendir(dname);
+                            if(d) {
+                                /* Directory exists. */
+                                closedir(d);
+                            } else {
+                                mkdir(dname, S_IRWXU);
+                            }
+                                
+                            char fn[128];
+                            if(r == 0)
+                                snprintf(fn, 128, "../P/%s/%03d_%dx%d.png", sp.c_str(), s_roi_index++, roiFrame.cols, roiFrame.rows);
+                            else
+                                snprintf(fn, 128, "../N/%s/%03d_%dx%d.png", sp.c_str(), s_roi_index++, roiFrame.cols, roiFrame.rows);
+                            imwrite(fn, roiFrame);
+                            //namedWindow("ROI", WINDOW_AUTOSIZE);
+                            //imshow("ROI", roiFrame);
+#endif
+                        }
+#endif
 #if 0                        
                         if(doTrigger && (t->LastRect().width >= 16 || t->LastRect().height >= 16)) {
 printf("R O I F R A M E\n");
@@ -1466,6 +1574,17 @@ printf("R O I F R A M E\n");
 #ifdef VIDEO_INPUT_FILE        
         namedWindow(argv[1], WINDOW_AUTOSIZE);
         imshow(argv[1], outFrame);
+/*
+        Rect roi;
+        roi.x = 0;
+        roi.y = (CAMERA_WIDTH * HORIZON_RATIO);
+        roi.width = CAMERA_HEIGHT;
+        roi.height = CAMERA_WIDTH - (CAMERA_WIDTH * HORIZON_RATIO);
+
+        Mat m = capFrame(roi);
+
+        color_image_equalize_histogram(m);
+*/
 #else
         namedWindow("Out Frame", WINDOW_AUTOSIZE);
         imshow("Out Frame", outFrame);
@@ -1476,7 +1595,7 @@ printf("R O I F R A M E\n");
         int k = waitKey(1);
         if(k == 27) { /* Press key 'ESC' to quit */
             break;
-#if 1            
+#if 0            
         } else if(k == 'p') { /* Press key 'p' to pause or resume */
 #else
         } else if(k == 'p' || isNewTrigger) { /* Press key 'p' to pause or resume */
