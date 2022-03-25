@@ -35,6 +35,8 @@ using std::chrono::duration_cast;
 using std::chrono::microseconds;
 using std::chrono::milliseconds;
 
+//#define CUDA_ZERO_COPY_MEMORY
+
 #ifndef DEBUG
 #define DEBUG
 #endif
@@ -70,7 +72,7 @@ using std::chrono::milliseconds;
 
 #define VIDEO_FRAME_DROP 30
 
-//#define IMAGE_INFERENCE
+#define IMAGE_INFERENCE
 
 #ifdef IMAGE_INFERENCE
 #include "image_inference.hpp" 
@@ -1177,6 +1179,25 @@ void extract_moving_object(Mat & frame,
     Ptr<cuda::BackgroundSubtractorMOG2> & bsModel, 
     list<Rect> & roiRect)
 {
+// cuda zero copy memory ... Very bad performance !!!
+#ifdef CUDA_ZERO_COPY_MEMORY
+    void *device_ptr;
+    cudaHostGetDevicePointer((void **)&device_ptr, (void *)frame.data, 0);
+    cuda::GpuMat gpuFrame(frame.rows, frame.cols, CV_8UC1, device_ptr);
+
+    void *host_ptr, *device_ptr2;
+    cudaHostAlloc((void **)&host_ptr, frame.total() * frame.elemSize(), cudaHostAllocMapped);
+    cudaHostGetDevicePointer((void **)&device_ptr2, (void *)host_ptr, 0);
+
+    cuda::GpuMat gpuForegroundMask(frame.rows, frame.cols, CV_8UC1, device_ptr2);
+    bsModel->apply(gpuFrame, gpuForegroundMask, 0.05);
+
+    erodeFilter->apply(gpuForegroundMask, gpuForegroundMask);
+    dilateFilter->apply(gpuForegroundMask, gpuForegroundMask);
+
+    Mat foregroundMask(frame.rows, frame.cols, CV_8UC1, host_ptr);
+#else
+
     Mat foregroundMask;
     cuda::GpuMat gpuFrame;
     cuda::GpuMat gpuForegroundMask;
@@ -1192,6 +1213,8 @@ void extract_moving_object(Mat & frame,
     gpuForegroundMask.download(foregroundMask);
     morphologyEx(foregroundMask, foregroundMask, MORPH_ERODE, elementErode);
     morphologyEx(foregroundMask, foregroundMask, MORPH_DILATE, elementDilate);
+#endif
+
 #endif
 
 #ifdef VIDEO_OUTPUT_SCREEN
@@ -1234,6 +1257,10 @@ int main(int argc, char**argv)
     cuda::printShortCudaDeviceInfo(cuda::getDevice());
     std::cout << cv::getBuildInformation() << std::endl;
 
+#ifdef CUDA_ZERO_COPY_MEMORY
+    cudaSetDeviceFlags(cudaDeviceMapHost);
+#endif
+
 #ifdef IMAGE_INFERENCE    
     ImageInference *ifer = new ImageInference;
     cout << "Load " << MODEL_ENGINE << endl;
@@ -1245,11 +1272,6 @@ int main(int argc, char**argv)
         cout << "Fail to load " << MODEL_ENGINE << " -->> Abort !!!" << endl;
         exit(1);
     }
-#endif
-
-    Mat capFrame, bgFrame;
-#if defined(VIDEO_OUTPUT_SCREEN) || defined(VIDEO_OUTPUT_FILE)
-    Mat outFrame;
 #endif
 
 #ifdef VIDEO_INPUT_FILE
@@ -1279,6 +1301,8 @@ int main(int argc, char**argv)
     }
 
 #ifdef VIDEO_INPUT_FILE
+//    uint32_t capWidth = cap.get(CAP_PROP_FRAME_WIDTH);
+//    uint32_t capHeight = cap.get(CAP_PROP_FRAME_HEIGHT);
 #else
     cap.set(CAP_PROP_FOURCC ,VideoWriter::fourcc('M', 'J', 'P', 'G') );
     cap.set(CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH);
@@ -1292,6 +1316,11 @@ int main(int argc, char**argv)
         if(!cap.read(capFrame))
             printf("Error read camera frame ...\n");
     }
+#endif
+
+    Mat capFrame;
+#if defined(VIDEO_OUTPUT_SCREEN) || defined(VIDEO_OUTPUT_FILE)
+    Mat outFrame;
 #endif
 
     int cx, cy;
@@ -1360,7 +1389,15 @@ int main(int argc, char**argv)
     while(dropCount-- > 0)
         cap.read(capFrame);
 
-    cvtColor(capFrame, bgFrame, COLOR_BGR2GRAY);
+#ifdef CUDA_ZERO_COPY_MEMORY
+    size_t zc_size = cap.get(CAP_PROP_FRAME_WIDTH) * cap.get(CAP_PROP_FRAME_HEIGHT) * (1); // Gray frame
+    void *host_ptr, *device_ptr;
+    cudaHostAlloc((void **)&host_ptr, zc_size, cudaHostAllocMapped);
+    //cudaHostGetDevicePointer((void **)&device_ptr, (void *)host_ptr, 0);
+    Mat grayFrame(cap.get(CAP_PROP_FRAME_HEIGHT), cap.get(CAP_PROP_FRAME_WIDTH), CV_8UC1, host_ptr);
+#else
+    Mat grayFrame(cap.get(CAP_PROP_FRAME_HEIGHT), cap.get(CAP_PROP_FRAME_WIDTH), CV_8UC1);
+#endif
 
     uint64_t loopCount = 0;
 
@@ -1383,7 +1420,7 @@ int main(int argc, char**argv)
 
         list<Rect> roiRect;
         /* Gray color space for whole region */
-        Mat grayFrame, roiFrame;
+        Mat roiFrame;
         cvtColor(capFrame, grayFrame, COLOR_BGR2GRAY);
 
         extract_moving_object(grayFrame, elementErode, elementDilate, erodeFilter, dilateFilter, bsModel, roiRect);
